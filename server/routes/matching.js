@@ -39,7 +39,8 @@ router.post('/run', async (req, res, next) => {
     if (result.errors?.length) {
       return res.status(400).json({
         error: result.errors[0],
-        details: result.errors
+        details: result.errors,
+        validationDiagnostics: result.validationDiagnostics || []
       });
     }
 

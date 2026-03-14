@@ -32,7 +32,10 @@ async function request(url, options = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const error = new Error(err.error || `HTTP ${res.status}`);
+    error.details = Array.isArray(err.details) ? err.details : [];
+    error.validationDiagnostics = Array.isArray(err.validationDiagnostics) ? err.validationDiagnostics : [];
+    throw error;
   }
   return res.json();
 }

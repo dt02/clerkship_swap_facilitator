@@ -410,10 +410,17 @@ function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, op
       usersById: normalizedUsers,
       acceptedActions: [],
       schedulesByUser: normalizedSchedulesByUser,
+      blockedByUser: normalizedBlockedByUser,
       satisfiedDesires: [],
       unmetDesires: normalizedDesires,
       totalDesires: normalizedDesires.length,
-      errors: initialErrors
+      errors: initialErrors,
+      validationDiagnostics: buildValidationDiagnostics(
+        normalizedUsers,
+        normalizedSchedulesByUser,
+        normalizedBlockedByUser,
+        clerkshipDefinitions
+      )
     });
   }
 
@@ -470,10 +477,12 @@ function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, op
     usersById: normalizedUsers,
     acceptedActions,
     schedulesByUser: state.schedulesByUser,
+    blockedByUser: normalizedBlockedByUser,
     satisfiedDesires,
     unmetDesires,
     totalDesires: normalizedDesires.length,
-    errors: []
+    errors: [],
+    validationDiagnostics: []
   });
 }
 
@@ -704,7 +713,17 @@ function isCurrentDesire(state, desire, immobileByUser) {
   return true;
 }
 
-function buildResult({ usersById, acceptedActions, schedulesByUser, satisfiedDesires, unmetDesires, totalDesires, errors }) {
+function buildResult({
+  usersById,
+  acceptedActions,
+  schedulesByUser,
+  blockedByUser,
+  satisfiedDesires,
+  unmetDesires,
+  totalDesires,
+  errors,
+  validationDiagnostics
+}) {
   const freeMoves = acceptedActions
     .filter((action) => action.type === 'FREE_MOVE')
     .map((action) => formatFreeMove(action, usersById));
@@ -727,7 +746,8 @@ function buildResult({ usersById, acceptedActions, schedulesByUser, satisfiedDes
       swaps: swaps.length,
       unmet: unmet.length
     },
-    errors
+    errors,
+    validationDiagnostics: validationDiagnostics || []
   };
 }
 
@@ -771,6 +791,42 @@ function formatDesireForDisplay(desire, usersById) {
     from: formatPeriodYear(desire.fromPeriod, desire.fromYear),
     to: formatPeriodYear(desire.toPeriod, desire.toYear)
   };
+}
+
+function formatScheduleEntryForDisplay(entry) {
+  return {
+    clerkship: entry.clerkship,
+    start: formatPeriodYear(entry.startPeriod, entry.year),
+    isImmobile: Boolean(entry.isImmobile)
+  };
+}
+
+function buildValidationDiagnostics(usersById, schedulesByUser, blockedByUser, clerkshipDefinitions) {
+  const diagnostics = [];
+
+  for (const userId of Object.keys(schedulesByUser).sort(compareStrings)) {
+    const schedule = schedulesByUser[userId] || [];
+    const blockedPeriods = blockedByUser[userId] || [];
+    const validation = validateSchedule(schedule, blockedPeriods, clerkshipDefinitions);
+
+    if (!validation.errors.length) {
+      continue;
+    }
+
+    const user = usersById[userId];
+    diagnostics.push({
+      userId: user?.id ?? userId,
+      userName: user?.name || `User ${userId}`,
+      email: user?.email || '',
+      errors: validation.errors,
+      schedule: schedule.map(formatScheduleEntryForDisplay),
+      blockedPeriods: blockedPeriods
+        .map((blockedPeriod) => formatPeriodYear(blockedPeriod.period, blockedPeriod.year))
+        .sort(compareStrings)
+    });
+  }
+
+  return diagnostics;
 }
 
 function validateStartingSchedules(schedulesByUser, blockedByUser, clerkshipDefinitions) {

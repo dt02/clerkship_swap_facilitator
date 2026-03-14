@@ -84,6 +84,10 @@ test('POST /api/matching/run returns 400 and does not save when schedules are in
 
     assert.equal(response.status, 400);
     assert.match(body.error, /ANES 306A must start after SURG 300A ends/i);
+    assert.equal(Array.isArray(body.validationDiagnostics), true);
+    assert.equal(body.validationDiagnostics.length, 1);
+    assert.equal(body.validationDiagnostics[0].userName, 'Alice');
+    assert.equal(body.validationDiagnostics[0].schedule.length, 3);
     assert.equal(insertCalls, 0);
   });
 });

@@ -7,6 +7,8 @@ export default function AdminPage() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [matchingErrorDetails, setMatchingErrorDetails] = useState([]);
+  const [validationDiagnostics, setValidationDiagnostics] = useState([]);
   const [lastRun, setLastRun] = useState(null);
   const [deletingUserId, setDeletingUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('matching');
@@ -41,11 +43,17 @@ export default function AdminPage() {
   async function handleRun() {
     setLoading(true);
     setError('');
+    setMatchingErrorDetails([]);
+    setValidationDiagnostics([]);
     try {
       const data = await runMatching();
       setResults(data);
+      setLastRun({ run_at: new Date().toISOString() });
     } catch (e) {
       setError(e.message);
+      setMatchingErrorDetails(Array.isArray(e.details) ? e.details : []);
+      setValidationDiagnostics(Array.isArray(e.validationDiagnostics) ? e.validationDiagnostics : []);
+      setResults(null);
     }
     setLoading(false);
   }
@@ -331,6 +339,66 @@ export default function AdminPage() {
           </div>
 
           {error && <div style={errorBox}>{error}</div>}
+          {validationDiagnostics.length > 0 && (
+            <div style={diagnosticsWrap}>
+              <div style={diagnosticsSummary}>
+                Matching stopped before any swaps were attempted because one or more current schedules are already invalid.
+                A blocked-period message means a user&apos;s existing clerkship placement already occupies a period they marked as blocked.
+              </div>
+              {validationDiagnostics.map((diagnostic) => (
+                <div key={diagnostic.userId} style={diagnosticCard}>
+                  <div style={{ display: 'grid', gap: '4px' }}>
+                    <strong style={{ color: '#2c3e50' }}>
+                      {diagnostic.userName} (User {diagnostic.userId})
+                    </strong>
+                    {diagnostic.email ? (
+                      <span style={{ fontSize: '12px', color: '#7f8c8d' }}>{diagnostic.email}</span>
+                    ) : null}
+                  </div>
+                  <div>
+                    <div style={diagnosticLabel}>Problems</div>
+                    <ul style={diagnosticList}>
+                      {diagnostic.errors.map((detail, index) => (
+                        <li key={index}>{detail}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <div style={diagnosticLabel}>Current Schedule</div>
+                    <div style={chipRow}>
+                      {diagnostic.schedule.map((entry) => (
+                        <span key={`${entry.clerkship}-${entry.start}`} style={infoChip}>
+                          {entry.clerkship} at {entry.start}{entry.isImmobile ? ' (Locked)' : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={diagnosticLabel}>Blocked Periods</div>
+                    <div style={chipRow}>
+                      {diagnostic.blockedPeriods.length > 0 ? (
+                        diagnostic.blockedPeriods.map((period) => (
+                          <span key={period} style={blockedChip}>{period}</span>
+                        ))
+                      ) : (
+                        <span style={emptyText}>No blocked periods</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {validationDiagnostics.length === 0 && matchingErrorDetails.length > 1 && (
+            <div style={diagnosticsWrap}>
+              <div style={diagnosticLabel}>All reported issues</div>
+              <ul style={diagnosticList}>
+                {matchingErrorDetails.map((detail, index) => (
+                  <li key={index}>{detail}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {results && (
             <div>
@@ -527,3 +595,12 @@ const textAreaStyle = { padding: '10px 12px', border: '1px solid #d5dbdb', borde
 const blockCard = { display: 'grid', gap: '12px', padding: '16px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fafbfc' };
 const addButton = { padding: '8px 12px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 };
 const removeButton = { padding: '6px 10px', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' };
+const diagnosticsWrap = { display: 'grid', gap: '12px', marginBottom: '20px' };
+const diagnosticsSummary = { padding: '12px 14px', backgroundColor: '#fff8e1', border: '1px solid #f5deb3', borderRadius: '6px', color: '#7d5a16', fontSize: '13px', lineHeight: 1.6 };
+const diagnosticCard = { display: 'grid', gap: '12px', padding: '16px', border: '1px solid #f1c7c5', borderRadius: '8px', backgroundColor: '#fffafa' };
+const diagnosticLabel = { fontSize: '12px', fontWeight: 700, color: '#7f8c8d', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' };
+const diagnosticList = { margin: 0, paddingLeft: '18px', color: '#2c3e50', fontSize: '13px', lineHeight: 1.6 };
+const chipRow = { display: 'flex', flexWrap: 'wrap', gap: '6px' };
+const infoChip = { padding: '4px 10px', backgroundColor: '#eef6fb', color: '#1f5f8b', borderRadius: '999px', fontSize: '12px' };
+const blockedChip = { padding: '4px 10px', backgroundColor: '#fde8e8', color: '#b42318', borderRadius: '999px', fontSize: '12px' };
+const emptyText = { color: '#95a5a6', fontSize: '12px' };
