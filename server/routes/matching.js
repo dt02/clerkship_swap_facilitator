@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { findSwaps } = require('../matching/solver');
 const { requireAdmin } = require('../auth');
+const { sanitizeBlockedPeriods } = require('../blockedPeriods');
 
 router.post('/run', async (req, res, next) => {
   try {
@@ -27,6 +28,11 @@ router.post('/run', async (req, res, next) => {
     for (const entry of allBlocked.rows) {
       if (!blocked[entry.user_id]) blocked[entry.user_id] = [];
       blocked[entry.user_id].push(entry);
+    }
+
+    for (const user of users.rows) {
+      const userId = user.id;
+      blocked[userId] = sanitizeBlockedPeriods(blocked[userId] || [], schedules[userId] || []);
     }
 
     const availability = {};
