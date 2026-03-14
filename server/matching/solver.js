@@ -8,7 +8,13 @@ const {
 
 const HALF_SLOTS_PER_YEAR = 24;
 const MAX_HALF_SLOTS = YEAR_BASE_OFFSETS[2] + HALF_SLOTS_PER_YEAR;
-const MAX_SWAP_SIZE = 3;
+const MAX_SWAP_SIZE = 5;
+
+let _highsPromise = null;
+function getHighsSolver() {
+  if (!_highsPromise) _highsPromise = require('highs')();
+  return _highsPromise;
+}
 
 function buildClerkshipDefinitions() {
   return Object.fromEntries(
@@ -388,7 +394,254 @@ function compareActions(actionA, actionB, desiresById) {
   return compareStrings(scoreA.canonicalKey, scoreB.canonicalKey);
 }
 
-function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot) {
+function buildDesireGraph(state, desires, immobileByUser) {
+  const adjacency = Object.create(null);
+  const freeEdges = Object.create(null);
+
+  for (const desire of desires) {
+    if (!isCurrentDesire(state, desire, immobileByUser)) {
+      continue;
+    }
+
+    const userId = normalizeId(desire.userId);
+    const targetKey = makeSlotKey(desire.clerkship, desire.toPeriod, desire.toYear);
+    const occupants = state.occupancyBySlot[targetKey];
+
+    if (occupants) {
+      for (const occupant of occupants) {
+        if (occupant === userId) continue;
+        if (!adjacency[userId]) adjacency[userId] = [];
+        adjacency[userId].push({ to: occupant, desire });
+      }
+    }
+
+    if (Number(state.openAvailabilityBySlot[targetKey] || 0) > 0) {
+      if (!freeEdges[userId]) freeEdges[userId] = [];
+      freeEdges[userId].push(desire);
+    }
+  }
+
+  return { adjacency, freeEdges };
+}
+
+function enumerateValidCycles(state, graph, blockedByUser, immobileByUser, clerkshipDefinitions) {
+  const validCycles = [];
+  const seen = new Set();
+
+  for (const userId of Object.keys(graph.freeEdges).sort(compareStrings)) {
+    for (const desire of graph.freeEdges[userId]) {
+      const action = finalizeAction({
+        type: 'FREE_MOVE',
+        participantUserIds: [desire.userId],
+        desireIdsSatisfied: [desire.id],
+        moves: [
+          makeMove(desire.userId, desire.clerkship, desire.fromPeriod, desire.fromYear, desire.toPeriod, desire.toYear)
+        ]
+      });
+
+      const actionKey = canonicalActionKey(action);
+      if (seen.has(actionKey)) continue;
+      seen.add(actionKey);
+
+      const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
+      if (simulation.valid) {
+        validCycles.push(action);
+      }
+    }
+  }
+
+  const allNodes = Object.keys(graph.adjacency).sort(compareStrings);
+
+  for (const startNode of allNodes) {
+    const path = [startNode];
+    const pathEdges = [];
+    const visited = new Set([startNode]);
+
+    function dfs(current) {
+      const edges = graph.adjacency[current];
+      if (!edges) return;
+
+      for (const edge of edges) {
+        if (edge.to === startNode && path.length >= 2) {
+          const isSmallest = path.every((node) => compareStrings(startNode, node) <= 0);
+          if (!isSmallest) continue;
+
+          const cycleEdges = [...pathEdges, edge];
+          const swapType = `SWAP_${path.length}`;
+          const action = finalizeAction({
+            type: swapType,
+            participantUserIds: path.map((node) => cycleEdges.find((e) => normalizeId(e.desire.userId) === node)?.desire.userId || node),
+            desireIdsSatisfied: cycleEdges.map((e) => e.desire.id),
+            moves: cycleEdges.map((e) => {
+              const d = e.desire;
+              return makeMove(d.userId, d.clerkship, d.fromPeriod, d.fromYear, d.toPeriod, d.toYear);
+            })
+          });
+
+          const actionKey = canonicalActionKey(action);
+          if (seen.has(actionKey)) continue;
+          seen.add(actionKey);
+
+          const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
+          if (simulation.valid) {
+            validCycles.push(action);
+          }
+          continue;
+        }
+
+        if (visited.has(edge.to)) continue;
+        if (path.length >= MAX_SWAP_SIZE) continue;
+
+        visited.add(edge.to);
+        path.push(edge.to);
+        pathEdges.push(edge);
+        dfs(edge.to);
+        pathEdges.pop();
+        path.pop();
+        visited.delete(edge.to);
+      }
+    }
+
+    dfs(startNode);
+  }
+
+  return validCycles;
+}
+
+function sanitizeLPName(raw) {
+  return raw.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+function computeSlotDeltas(action) {
+  const deltas = Object.create(null);
+
+  for (const move of action.moves) {
+    const fromKey = makeSlotKey(move.clerkship, move.fromPeriod, move.fromYear);
+    const toKey = makeSlotKey(move.clerkship, move.toPeriod, move.toYear);
+    deltas[fromKey] = (deltas[fromKey] || 0) - 1;
+    deltas[toKey] = (deltas[toKey] || 0) + 1;
+  }
+
+  return deltas;
+}
+
+function buildLPModel(validCycles, state, desiresById) {
+  const n = validCycles.length;
+
+  const weights = validCycles.map((cycle) => {
+    const desireMetadata = (cycle.desireIdsSatisfied || [])
+      .map((desireId) => desiresById[normalizeId(desireId)])
+      .filter(Boolean);
+
+    let w = cycle.desireIdsSatisfied.length * 1000;
+
+    for (const desire of desireMetadata) {
+      const rank = normalizePriorityRank(desire.priorityRank);
+      if (rank != null) {
+        w += (100 - rank);
+      }
+    }
+
+    for (const desire of desireMetadata) {
+      const ts = normalizeCreatedAt(desire.createdAt);
+      if (ts !== Number.MAX_SAFE_INTEGER) {
+        const normalized = ts / (Date.now() + 1);
+        w += 0.001 * (1 - normalized);
+      }
+    }
+
+    const canonicalKey = canonicalActionKey(cycle);
+    let hashVal = 0;
+    for (let i = 0; i < canonicalKey.length; i++) {
+      hashVal = ((hashVal << 5) - hashVal + canonicalKey.charCodeAt(i)) | 0;
+    }
+    w += Math.abs(hashVal) * 1e-9;
+
+    return w;
+  });
+
+  const objTerms = weights.map((w, i) => `${w} x_${i}`).join(' + ');
+
+  const userToCycles = Object.create(null);
+  for (let i = 0; i < n; i++) {
+    for (const uid of validCycles[i].participantUserIds) {
+      const key = normalizeId(uid);
+      if (!userToCycles[key]) userToCycles[key] = [];
+      userToCycles[key].push(i);
+    }
+  }
+
+  const constraintLines = [];
+  for (const userId of Object.keys(userToCycles).sort(compareStrings)) {
+    const indices = userToCycles[userId];
+    const terms = indices.map((i) => `x_${i}`).join(' + ');
+    constraintLines.push(` user_${sanitizeLPName(userId)}: ${terms} <= 1`);
+  }
+
+  const slotToCycles = Object.create(null);
+  const slotDeltas = validCycles.map((cycle) => computeSlotDeltas(cycle));
+
+  for (let i = 0; i < n; i++) {
+    for (const [slotKey, delta] of Object.entries(slotDeltas[i])) {
+      if (delta > 0) {
+        if (!slotToCycles[slotKey]) slotToCycles[slotKey] = [];
+        slotToCycles[slotKey].push({ index: i, delta });
+      }
+    }
+  }
+
+  for (const slotKey of Object.keys(slotToCycles).sort(compareStrings)) {
+    const openAvailability = Number(state.openAvailabilityBySlot[slotKey] || 0);
+    const entries = slotToCycles[slotKey];
+    const terms = entries.map((e) => `${e.delta} x_${e.index}`).join(' + ');
+    constraintLines.push(` slot_${sanitizeLPName(slotKey)}: ${terms} <= ${openAvailability}`);
+  }
+
+  const varNames = Array.from({ length: n }, (_, i) => `x_${i}`).join(' ');
+
+  const lp = [
+    'Maximize',
+    ` obj: ${objTerms}`,
+    'Subject To',
+    ...constraintLines,
+    'Binary',
+    ` ${varNames}`,
+    'End'
+  ].join('\n');
+
+  return lp;
+}
+
+async function selectOptimalCycles(validCycles, state, desiresById) {
+  if (validCycles.length === 0) return [];
+  if (validCycles.length === 1) return [validCycles[0]];
+
+  try {
+    const lpString = buildLPModel(validCycles, state, desiresById);
+    const highs = await getHighsSolver();
+    const solution = highs.solve(lpString);
+
+    if (solution.Status === 'Optimal') {
+      const selected = [];
+      for (let i = 0; i < validCycles.length; i++) {
+        const col = solution.Columns[`x_${i}`];
+        if (col && col.Primal >= 0.5) {
+          selected.push(validCycles[i]);
+        }
+      }
+      selected.sort((a, b) => compareActions(a, b, desiresById));
+      return selected;
+    }
+
+    console.warn('HiGHS solver returned non-optimal status:', solution.Status);
+    return [];
+  } catch (error) {
+    console.error('HiGHS solver failed, returning empty results:', error);
+    return [];
+  }
+}
+
+async function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot) {
   const clerkshipDefinitions = buildClerkshipDefinitions();
   const normalizedUsers = normalizeUsers(users);
   const normalizedSchedulesByUser = normalizeSchedulesByUser(schedulesByUser);
@@ -398,7 +651,6 @@ function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, op
   const desiresById = Object.fromEntries(
     normalizedDesires.map((desire) => [normalizeId(desire.id), desire])
   );
-  const desiresByUser = groupDesiresByUser(normalizedDesires);
   const initialErrors = validateStartingSchedules(
     normalizedSchedulesByUser,
     normalizedBlockedByUser,
@@ -433,41 +685,13 @@ function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, op
   const immobileByUser = buildImmobileByUser(state.schedulesByUser);
   const acceptedActions = [];
 
-  while (true) {
-    const freeMoves = generateFreeMoveCandidates(
-      state,
-      normalizedDesires,
-      normalizedBlockedByUser,
-      immobileByUser,
-      clerkshipDefinitions
-    );
-    const twoWaySwaps = generateTwoWaySwapCandidates(
-      state,
-      normalizedDesires,
-      desiresByUser,
-      immobileByUser,
-      normalizedBlockedByUser,
-      clerkshipDefinitions
-    );
-    const threeWaySwaps = generateThreeWaySwapCandidates(
-      state,
-      normalizedDesires,
-      desiresByUser,
-      immobileByUser,
-      normalizedBlockedByUser,
-      clerkshipDefinitions
-    );
-    const candidates = [...freeMoves, ...twoWaySwaps, ...threeWaySwaps];
+  const graph = buildDesireGraph(state, normalizedDesires, immobileByUser);
+  const validCycles = enumerateValidCycles(state, graph, normalizedBlockedByUser, immobileByUser, clerkshipDefinitions);
+  const selectedCycles = await selectOptimalCycles(validCycles, state, desiresById);
 
-    if (candidates.length === 0) {
-      break;
-    }
-
-    candidates.sort((actionA, actionB) => compareActions(actionA, actionB, desiresById));
-
-    const bestAction = candidates[0];
-    commitAction(state, bestAction);
-    acceptedActions.push(bestAction);
+  for (const action of selectedCycles) {
+    commitAction(state, action);
+    acceptedActions.push(action);
   }
 
   const satisfiedDesires = normalizedDesires.filter((desire) => state.satisfiedDesireIds.has(normalizeId(desire.id)));
@@ -486,204 +710,10 @@ function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, op
   });
 }
 
-function findSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot) {
+async function findSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot) {
   return findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot);
 }
 
-function generateFreeMoveCandidates(state, desires, blockedByUser, immobileByUser, clerkshipDefinitions) {
-  const candidates = [];
-
-  for (const desire of getCurrentDesires(state, desires, immobileByUser)) {
-    const targetKey = makeSlotKey(desire.clerkship, desire.toPeriod, desire.toYear);
-    if (Number(state.openAvailabilityBySlot[targetKey] || 0) <= 0) {
-      continue;
-    }
-
-    const action = finalizeAction({
-      type: 'FREE_MOVE',
-      participantUserIds: [desire.userId],
-      desireIdsSatisfied: [desire.id],
-      moves: [
-        makeMove(
-          desire.userId,
-          desire.clerkship,
-          desire.fromPeriod,
-          desire.fromYear,
-          desire.toPeriod,
-          desire.toYear
-        )
-      ]
-    });
-
-    const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
-    if (simulation.valid) {
-      candidates.push(action);
-    }
-  }
-
-  return candidates;
-}
-
-function generateTwoWaySwapCandidates(state, desires, desiresByUser, immobileByUser, blockedByUser, clerkshipDefinitions) {
-  const candidates = [];
-  const seen = new Set();
-
-  for (const desireA of getCurrentDesires(state, desires, immobileByUser)) {
-    const targetOccupants = sortedOccupants(state.occupancyBySlot[makeSlotKey(desireA.clerkship, desireA.toPeriod, desireA.toYear)]);
-
-    for (const userB of targetOccupants) {
-      if (userB === normalizeId(desireA.userId)) {
-        continue;
-      }
-
-      for (const desireB of desiresByUser[userB] || []) {
-        if (!isCurrentDesire(state, desireB, immobileByUser)) {
-          continue;
-        }
-
-        const targetForB = makeSlotKey(desireB.clerkship, desireB.toPeriod, desireB.toYear);
-        if (!state.occupancyBySlot[targetForB]?.has(normalizeId(desireA.userId))) {
-          continue;
-        }
-
-        const action = finalizeAction({
-          type: 'SWAP_2',
-          participantUserIds: [desireA.userId, desireB.userId],
-          desireIdsSatisfied: [desireA.id, desireB.id],
-          moves: [
-            makeMove(
-              desireA.userId,
-              desireA.clerkship,
-              desireA.fromPeriod,
-              desireA.fromYear,
-              desireA.toPeriod,
-              desireA.toYear
-            ),
-            makeMove(
-              desireB.userId,
-              desireB.clerkship,
-              desireB.fromPeriod,
-              desireB.fromYear,
-              desireB.toPeriod,
-              desireB.toYear
-            )
-          ]
-        });
-
-        const actionKey = canonicalActionKey(action);
-        if (seen.has(actionKey)) {
-          continue;
-        }
-
-        seen.add(actionKey);
-
-        const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
-        if (simulation.valid) {
-          candidates.push(action);
-        }
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function generateThreeWaySwapCandidates(state, desires, desiresByUser, immobileByUser, blockedByUser, clerkshipDefinitions) {
-  const candidates = [];
-  const seen = new Set();
-
-  for (const desireA of getCurrentDesires(state, desires, immobileByUser)) {
-    const occupantsB = sortedOccupants(state.occupancyBySlot[makeSlotKey(desireA.clerkship, desireA.toPeriod, desireA.toYear)]);
-
-    for (const userB of occupantsB) {
-      if (userB === normalizeId(desireA.userId)) {
-        continue;
-      }
-
-      for (const desireB of desiresByUser[userB] || []) {
-        if (!isCurrentDesire(state, desireB, immobileByUser)) {
-          continue;
-        }
-
-        const occupantsC = sortedOccupants(state.occupancyBySlot[makeSlotKey(desireB.clerkship, desireB.toPeriod, desireB.toYear)]);
-
-        for (const userC of occupantsC) {
-          if ([normalizeId(desireA.userId), normalizeId(desireB.userId)].includes(userC)) {
-            continue;
-          }
-
-          for (const desireC of desiresByUser[userC] || []) {
-            if (!isCurrentDesire(state, desireC, immobileByUser)) {
-              continue;
-            }
-
-            const targetForC = makeSlotKey(desireC.clerkship, desireC.toPeriod, desireC.toYear);
-            if (!state.occupancyBySlot[targetForC]?.has(normalizeId(desireA.userId))) {
-              continue;
-            }
-
-            const participants = uniqueByValue([desireA.userId, desireB.userId, desireC.userId]);
-            if (participants.length !== MAX_SWAP_SIZE) {
-              continue;
-            }
-
-            const action = finalizeAction({
-              type: 'SWAP_3',
-              participantUserIds: participants,
-              desireIdsSatisfied: [desireA.id, desireB.id, desireC.id],
-              moves: [
-                makeMove(
-                  desireA.userId,
-                  desireA.clerkship,
-                  desireA.fromPeriod,
-                  desireA.fromYear,
-                  desireA.toPeriod,
-                  desireA.toYear
-                ),
-                makeMove(
-                  desireB.userId,
-                  desireB.clerkship,
-                  desireB.fromPeriod,
-                  desireB.fromYear,
-                  desireB.toPeriod,
-                  desireB.toYear
-                ),
-                makeMove(
-                  desireC.userId,
-                  desireC.clerkship,
-                  desireC.fromPeriod,
-                  desireC.fromYear,
-                  desireC.toPeriod,
-                  desireC.toYear
-                )
-              ]
-            });
-
-            const actionKey = canonicalActionKey(action);
-            if (seen.has(actionKey)) {
-              continue;
-            }
-
-            seen.add(actionKey);
-
-            const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
-            if (simulation.valid) {
-              candidates.push(action);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function getCurrentDesires(state, desires, immobileByUser) {
-  return [...(desires || [])]
-    .filter((desire) => isCurrentDesire(state, desire, immobileByUser))
-    .sort(compareDesiresDeterministically);
-}
 
 function isCurrentDesire(state, desire, immobileByUser) {
   const desireId = normalizeId(desire.id);
@@ -766,7 +796,7 @@ function formatFreeMove(action, usersById) {
 
 function formatSwap(action, usersById) {
   return {
-    type: action.type === 'SWAP_2' ? '2-Way Swap' : '3-Way Swap',
+    type: `${action.participantUserIds.length}-Way Swap`,
     participants: action.moves.map((move) => {
       const user = usersById[normalizeId(move.userId)];
       return {
@@ -942,23 +972,6 @@ function buildImmobileByUser(schedulesByUser) {
   return immobileByUser;
 }
 
-function groupDesiresByUser(desires) {
-  const desiresByUser = Object.create(null);
-
-  for (const desire of desires || []) {
-    const userId = normalizeId(desire.userId);
-    if (!desiresByUser[userId]) {
-      desiresByUser[userId] = [];
-    }
-    desiresByUser[userId].push(desire);
-  }
-
-  for (const userId of Object.keys(desiresByUser)) {
-    desiresByUser[userId].sort(compareDesiresDeterministically);
-  }
-
-  return desiresByUser;
-}
 
 function finalizeAction(action) {
   return {
@@ -1121,24 +1134,6 @@ function uniqueStrings(values) {
   return [...new Set(values)];
 }
 
-function uniqueByValue(values) {
-  const seen = new Set();
-  const result = [];
-
-  for (const value of values) {
-    const key = normalizeId(value);
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(value);
-    }
-  }
-
-  return result;
-}
-
-function sortedOccupants(occupants) {
-  return [...(occupants || [])].sort(compareStrings);
-}
 
 function periodLabelFromGlobalHalfSlot(halfSlot) {
   if (halfSlot < YEAR_BASE_OFFSETS[1]) {
@@ -1171,5 +1166,9 @@ module.exports = {
   compareActions,
   findBestBoundedSwaps,
   findSwaps,
-  buildClerkshipDefinitions
+  buildClerkshipDefinitions,
+  buildDesireGraph,
+  enumerateValidCycles,
+  buildLPModel,
+  selectOptimalCycles
 };
