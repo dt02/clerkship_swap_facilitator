@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: clerkship-swaps
+    runtime: node
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_NAME
+        value: Clerkship Admin
