@@ -93,8 +93,8 @@ export default function SchedulePage() {
     }];
 
     try {
-      const result = await saveSchedule(currentUser.id, newEntries);
-      setEntries(result);
+      await saveSchedule(currentUser.id, newEntries);
+      await loadData();
       setSuccess(`Added ${addClerkship} at ${formatPeriodYear(addPeriod, addYear)}`);
       setAddClerkship('');
       setAddPeriod('');
@@ -114,8 +114,8 @@ export default function SchedulePage() {
       }));
 
     try {
-      const result = await saveSchedule(currentUser.id, newEntries);
-      setEntries(result);
+      await saveSchedule(currentUser.id, newEntries);
+      await loadData();
       setSuccess(`Removed ${clerkship}`);
     } catch (e) {
       setError(e.message);
@@ -131,8 +131,8 @@ export default function SchedulePage() {
     }));
 
     try {
-      const result = await saveSchedule(currentUser.id, newEntries);
-      setEntries(result);
+      await saveSchedule(currentUser.id, newEntries);
+      await loadData();
     } catch (e) {
       setError(e.message);
     }

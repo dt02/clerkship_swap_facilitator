@@ -1,8 +1,36 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { CLERKSHIPS, SUPPORTED_YEARS, YEAR_PERIODS } = require('../clerkships');
+const { CLERKSHIPS, SUPPORTED_YEARS, YEAR_PERIODS, getOccupiedPeriods } = require('../clerkships');
 const { requireUserAccess } = require('../auth');
+
+function normalizeScheduleEntry(entry) {
+  return {
+    clerkship: entry.clerkship,
+    start_period: entry.start_period,
+    year: Number(entry.year),
+    is_immobile: Boolean(entry.is_immobile)
+  };
+}
+
+function normalizeBlockedPeriod(block) {
+  return {
+    period: block.period,
+    year: Number(block.year)
+  };
+}
+
+function removeBlockedPeriodsThatOverlapSchedule(blocked, scheduleEntries) {
+  const occupiedKeys = new Set();
+
+  for (const entry of scheduleEntries) {
+    for (const period of getOccupiedPeriods(entry.clerkship, entry.start_period)) {
+      occupiedKeys.add(`${entry.year}-${period}`);
+    }
+  }
+
+  return blocked.filter((block) => !occupiedKeys.has(`${block.year}-${block.period}`));
+}
 
 router.get('/:id/schedule', async (req, res, next) => {
   try {
@@ -42,16 +70,35 @@ router.put('/:id/schedule', async (req, res, next) => {
       }
     }
 
+    const normalizedEntries = entries.map(normalizeScheduleEntry);
+
     await db.withTransaction(async (client) => {
       await client.query('DELETE FROM schedule_entries WHERE user_id = $1', [userId]);
 
-      for (const entry of entries) {
+      for (const entry of normalizedEntries) {
         await client.query(
           `
             INSERT INTO schedule_entries (user_id, clerkship, start_period, year, is_immobile)
             VALUES ($1, $2, $3, $4, $5)
           `,
           [userId, entry.clerkship, entry.start_period, entry.year, Boolean(entry.is_immobile)]
+        );
+      }
+
+      const existingBlocked = await client.query(
+        'SELECT period, year FROM blocked_periods WHERE user_id = $1 ORDER BY year, period',
+        [userId]
+      );
+      const filteredBlocked = removeBlockedPeriodsThatOverlapSchedule(
+        existingBlocked.rows.map(normalizeBlockedPeriod),
+        normalizedEntries
+      );
+
+      await client.query('DELETE FROM blocked_periods WHERE user_id = $1', [userId]);
+      for (const block of filteredBlocked) {
+        await client.query(
+          'INSERT INTO blocked_periods (user_id, period, year) VALUES ($1, $2, $3)',
+          [userId, block.period, block.year]
         );
       }
     });
@@ -118,10 +165,19 @@ router.put('/:id/blocked', async (req, res, next) => {
       }
     }
 
+    const existingSchedule = await db.query(
+      'SELECT clerkship, start_period, year, is_immobile FROM schedule_entries WHERE user_id = $1 ORDER BY clerkship',
+      [userId]
+    );
+    const filteredBlocked = removeBlockedPeriodsThatOverlapSchedule(
+      blocked.map(normalizeBlockedPeriod),
+      existingSchedule.rows.map(normalizeScheduleEntry)
+    );
+
     await db.withTransaction(async (client) => {
       await client.query('DELETE FROM blocked_periods WHERE user_id = $1', [userId]);
 
-      for (const block of blocked) {
+      for (const block of filteredBlocked) {
         await client.query(
           'INSERT INTO blocked_periods (user_id, period, year) VALUES ($1, $2, $3)',
           [userId, block.period, block.year]
