@@ -89,7 +89,13 @@ export function useHomeContent() {
   return { content, blocks };
 }
 
-export function HomeHero({ content, signedInUser, currentUser }) {
+export function HomeHero({ content, signedInUser, currentUser, showSignedOutCallout = true }) {
+  const heroCallout = signedInUser
+    ? `${currentUser ? `Viewing ${currentUser.name}'s workspace. ` : ''}${content.signed_in_callout}`
+    : showSignedOutCallout
+      ? content.signed_out_callout
+      : '';
+
   return (
     <div style={heroCard}>
       <div style={eyebrow}>Clerkship Swap Facilitator</div>
@@ -97,11 +103,7 @@ export function HomeHero({ content, signedInUser, currentUser }) {
         {content.hero_title}
       </h2>
       <p style={lead}>{content.hero_body}</p>
-      <div style={callout}>
-        {signedInUser
-          ? `${currentUser ? `Viewing ${currentUser.name}'s workspace. ` : ''}${content.signed_in_callout}`
-          : content.signed_out_callout}
-      </div>
+      {heroCallout ? <div style={callout}>{heroCallout}</div> : null}
     </div>
   );
 }

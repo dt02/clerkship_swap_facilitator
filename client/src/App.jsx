@@ -240,7 +240,7 @@ function App() {
               <div style={emptyStateStyle}>Loading session...</div>
             ) : !signedInUser ? (
               <div style={{ display: 'grid', gap: '16px' }}>
-                <HomeHero content={homeContent} signedInUser={null} currentUser={null} />
+                <HomeHero content={homeContent} signedInUser={null} currentUser={null} showSignedOutCallout={false} />
                 <div style={authCard}>
                   <div style={authTabRow}>
                     <button
@@ -294,6 +294,11 @@ function App() {
                       <p style={{ color: '#666', margin: '0 0 12px' }}>
                         New users can create a regular account here and will be signed in automatically.
                       </p>
+                      {homeContent.signed_out_callout ? (
+                        <div style={warningBox}>
+                          {homeContent.signed_out_callout}
+                        </div>
+                      ) : null}
                       <form onSubmit={handleCreate} style={formStyle}>
                         <input
                           placeholder="Name"
@@ -460,6 +465,17 @@ const errorBox = {
   color: '#e74c3c',
   borderRadius: '4px',
   marginBottom: '12px'
+};
+
+const warningBox = {
+  padding: '12px 16px',
+  backgroundColor: '#fde8e8',
+  color: '#b42318',
+  border: '1px solid #f5c2c0',
+  borderRadius: '6px',
+  marginBottom: '12px',
+  fontSize: '13px',
+  lineHeight: 1.6
 };
 
 const helperText = {
