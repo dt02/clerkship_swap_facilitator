@@ -102,9 +102,9 @@ async function initDb() {
   );
 
   const defaultSiteContent = {
-    hero_title: 'Coordinate clerkship swaps with a shared, structured process',
+    hero_title: '',
     hero_body:
-      'This site helps students record their current clerkship schedule, mark blocked periods, request preferred moves, and lets an admin run a matching pass that finds direct openings and compatible swap chains.',
+      'Website to facilitate clerkship swaps. It may or may not work, but it doesn\'t hurt to try. Email deantran@stanford.edu if you have any questions.',
     signed_out_callout:
       'Sign in or create an account below to start entering your schedule and preferences.',
     signed_in_callout:
@@ -114,27 +114,26 @@ async function initDb() {
         title: 'How To Fill Out Your Information',
         items: [
           'Open the Schedule tab and enter each clerkship at its current start period and year.',
-          'Mark any Blocked Periods where you cannot move a clerkship.',
-          'If a clerkship cannot be moved at all, mark it as immobile in the schedule grid.',
+          'Mark any Blocked Periods where you do not want to schedule a clerkship.',
+          'If there is a non core clerkship scheduled that you do not want to drop, mark those periods as blocked.',
+          'If you do not want a specific clerkship moved, mark it as immobile in the schedule grid.',
           'Go to Desired Moves and add the clerkships you want moved, along with the destination period and year.'
-        ]
-      },
-      {
-        title: 'What Preferences Mean',
-        items: [
-          'Your current schedule is the source of truth for where each clerkship starts.',
-          'Blocked periods tell the system where a resulting schedule would be unacceptable.',
-          'Desired moves are requests, not guarantees. They are only applied if the result stays valid.',
-          'Admins can review all users, clean up accounts, and run the matching algorithm once everyone has entered data.'
         ]
       },
       {
         title: 'How The Algorithm Works',
         items: [
-          'It first looks for free moves into open availability.',
-          "It then searches for valid swap groups where everyone's requested destination is freed up by the same batch.",
-          'Swap groups are capped at 3 users, so the system will not execute 4-way or 5-way chains.',
-          'Every proposed result is checked against blocked periods and schedule constraints before being accepted.'
+          'The algorithm looks for the best legal way to reshuffle schedules using only three kinds of moves: an open spot, a 2-person swap, or a 3-person swap.',
+          'It checks whether a requested move would keep everyone’s full schedule valid, including no overlaps, no blocked times, correct clerkship timing, required prerequisites, and at least four clerkships in year 1.',
+          'If more than one possible swap could work, it ranks them and picks the option that helps the most students, then repeats the process until no more valid moves are possible.',
+        ]
+      },
+      {
+        title: 'IMPORTANT: Availability Tab',
+        items: [
+          'When you login, there is a tab for current core clerkship availabilities that the algorithm uses when proposing matches.',
+          'This may not necessarily be up to date. Please ensure that it is, or else the algorithm will not work as intended.',
+          'Anyone can edit the availability tab, and the changes should reflect for everyone.',
         ]
       }
     ])
