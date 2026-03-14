@@ -71,6 +71,32 @@ test('PUT /api/users/:id/schedule removes existing blocked periods that overlap 
   });
 });
 
+test('GET /api/users/:id/blocked drops stale blocked periods that are no longer valid for year 0', async () => {
+  const mockDb = createMockDb({
+    sessionToken: 'user-session',
+    actingUser: { id: 8, name: 'Emily', email: 'emily@example.com', is_admin: false },
+    users: [{ id: 8 }],
+    schedules: [],
+    blocked: [
+      { period: '10A', year: 0 },
+      { period: '10B', year: 0 },
+      { period: '11A', year: 0 }
+    ]
+  });
+
+  await withSchedulesApp(mockDb, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/users/8/blocked`, {
+      headers: {
+        'x-session-token': 'user-session'
+      }
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body, [{ period: '11A', year: 0 }]);
+  });
+});
+
 async function withSchedulesApp(mockDb, runTest) {
   const originalDbModule = require.cache[dbPath];
 

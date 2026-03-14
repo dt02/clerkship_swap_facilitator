@@ -138,6 +138,165 @@ test('findBestBoundedSwaps accepts a 3-way swap', async () => {
   assert.equal(result.finalSchedulesByUser['3'][0].startPeriod, '1A');
 });
 
+test('findBestBoundedSwaps can repair an overlap with an extra open-seat move for the same user', async () => {
+  const result = await findBestBoundedSwaps(
+    [
+      { id: 1, name: 'Dean' },
+      { id: 2, name: 'Aparna' }
+    ],
+    {
+      1: [
+        { clerkship: 'OBGYN 300A', start_period: '11B', year: 0, is_immobile: false },
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'PEDS 300A', start_period: '3A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '7A', year: 1, is_immobile: false },
+        { clerkship: 'FAMMED 301A', start_period: '9A', year: 1, is_immobile: false },
+        { clerkship: 'PSYC 300A', start_period: '12A', year: 1, is_immobile: false },
+        { clerkship: 'MED 313A', start_period: '2A', year: 2, is_immobile: false }
+      ],
+      2: [
+        { clerkship: 'MED 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'SURG 300A', start_period: '3A', year: 1, is_immobile: false },
+        { clerkship: 'PEDS 300A', start_period: '5A', year: 1, is_immobile: false },
+        { clerkship: 'OBGYN 300A', start_period: '7A', year: 1, is_immobile: false },
+        { clerkship: 'NENS 301A', start_period: '10A', year: 1, is_immobile: false },
+        { clerkship: 'FAMMED 301A', start_period: '2A', year: 2, is_immobile: false },
+        { clerkship: 'EMED 301A', start_period: '4A', year: 2, is_immobile: false },
+        { clerkship: 'PSYC 300A', start_period: '8A', year: 2, is_immobile: false },
+        { clerkship: 'MED 313A', start_period: '9A', year: 2, is_immobile: false },
+        { clerkship: 'ANES 306P', start_period: '10A', year: 2, is_immobile: false }
+      ]
+    },
+    {},
+    [
+      {
+        id: 'dean-fammed',
+        user_id: 1,
+        clerkship: 'FAMMED 301A',
+        from_period: '9A',
+        from_year: 1,
+        to_period: '2A',
+        to_year: 2
+      },
+      {
+        id: 'aparna-fammed',
+        user_id: 2,
+        clerkship: 'FAMMED 301A',
+        from_period: '2A',
+        from_year: 2,
+        to_period: '9A',
+        to_year: 1
+      }
+    ],
+    {
+      'MED 313A|5A|2': 1
+    }
+  );
+
+  assert.equal(result.acceptedActions.length, 1);
+  assert.equal(result.acceptedActions[0].type, 'SWAP_2');
+  assert.equal(result.acceptedActions[0].moves.length, 3);
+  assert.equal(result.satisfiedDesires.length, 2);
+
+  const deanSchedule = result.finalSchedulesByUser['1'];
+  const deanFammed = deanSchedule.find((entry) => entry.clerkship === 'FAMMED 301A');
+  const deanMed313 = deanSchedule.find((entry) => entry.clerkship === 'MED 313A');
+  assert.equal(deanFammed.startPeriod, '2A');
+  assert.equal(deanFammed.year, 2);
+  assert.equal(deanMed313.startPeriod, '5A');
+  assert.equal(deanMed313.year, 2);
+});
+
+test('findBestBoundedSwaps can repair the year-0/1 minimum with an extra same-user move', async () => {
+  const result = await findBestBoundedSwaps(
+    [{ id: 1, name: 'Alice' }],
+    {
+      1: [
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '5A', year: 1, is_immobile: false },
+        { clerkship: 'FAMMED 301A', start_period: '9A', year: 1, is_immobile: false },
+        { clerkship: 'PSYC 300A', start_period: '11A', year: 1, is_immobile: false },
+        { clerkship: 'NENS 301A', start_period: '1A', year: 2, is_immobile: false }
+      ]
+    },
+    {},
+    [
+      {
+        id: 'alice-fammed-later',
+        user_id: 1,
+        clerkship: 'FAMMED 301A',
+        from_period: '9A',
+        from_year: 1,
+        to_period: '3A',
+        to_year: 2
+      }
+    ],
+    {
+      'FAMMED 301A|3A|2': 1,
+      'NENS 301A|3A|1': 1
+    }
+  );
+
+  assert.equal(result.acceptedActions.length, 1);
+  assert.equal(result.acceptedActions[0].type, 'FREE_MOVE');
+  assert.equal(result.acceptedActions[0].moves.length, 2);
+  assert.equal(result.satisfiedDesires.length, 1);
+
+  const finalSchedule = result.finalSchedulesByUser['1'];
+  const fammed = finalSchedule.find((entry) => entry.clerkship === 'FAMMED 301A');
+  const nens = finalSchedule.find((entry) => entry.clerkship === 'NENS 301A');
+  const firstYearEquivalentCount = finalSchedule.filter((entry) => entry.year === 0 || entry.year === 1).length;
+
+  assert.equal(fammed.startPeriod, '3A');
+  assert.equal(fammed.year, 2);
+  assert.equal(nens.startPeriod, '3A');
+  assert.equal(nens.year, 1);
+  assert.equal(firstYearEquivalentCount, 4);
+});
+
+test('findBestBoundedSwaps can repair a prerequisite violation by moving the dependent later', async () => {
+  const result = await findBestBoundedSwaps(
+    [{ id: 1, name: 'Alice' }],
+    {
+      1: [
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '3A', year: 1, is_immobile: false },
+        { clerkship: 'ANES 306A', start_period: '5A', year: 1, is_immobile: false }
+      ]
+    },
+    {},
+    [
+      {
+        id: 'alice-med-later',
+        user_id: 1,
+        clerkship: 'MED 300A',
+        from_period: '3A',
+        from_year: 1,
+        to_period: '7A',
+        to_year: 1
+      }
+    ],
+    {
+      'MED 300A|7A|1': 1,
+      'ANES 306A|9A|1': 1
+    }
+  );
+
+  assert.equal(result.acceptedActions.length, 1);
+  assert.equal(result.acceptedActions[0].type, 'FREE_MOVE');
+  assert.equal(result.acceptedActions[0].moves.length, 2);
+  assert.equal(result.satisfiedDesires.length, 1);
+
+  const finalSchedule = result.finalSchedulesByUser['1'];
+  const med = finalSchedule.find((entry) => entry.clerkship === 'MED 300A');
+  const anes = finalSchedule.find((entry) => entry.clerkship === 'ANES 306A');
+
+  assert.equal(med.startPeriod, '7A');
+  assert.equal(med.year, 1);
+  assert.equal(anes.startPeriod, '9A');
+  assert.equal(anes.year, 1);
+});
+
 test('simulateAction rejects overlap failures after applying the candidate move', () => {
   const state = {
     schedulesByUser: {

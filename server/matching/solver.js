@@ -9,6 +9,7 @@ const {
 const HALF_SLOTS_PER_YEAR = 24;
 const MAX_HALF_SLOTS = YEAR_BASE_OFFSETS[2] + HALF_SLOTS_PER_YEAR;
 const MAX_SWAP_SIZE = 5;
+const MAX_SUPPORT_MOVES = 2;
 
 let _highsPromise = null;
 function getHighsSolver() {
@@ -175,58 +176,12 @@ function validateSchedule(scheduleEntries, blockedPeriods, clerkshipDefinitions)
 }
 
 function simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions) {
-  const tempSchedulesByUser = Object.create(null);
-  const touchedSlotKeys = new Set();
-  const affectedUserIds = uniqueStrings(action.moves.map((move) => normalizeId(move.userId)));
-
-  for (const userId of affectedUserIds) {
-    tempSchedulesByUser[userId] = (state.schedulesByUser[userId] || []).map(cloneScheduleEntry);
+  const prepared = applyActionToTempSchedules(state, action, immobileByUser);
+  if (!prepared.valid) {
+    return prepared;
   }
 
-  for (const move of action.moves) {
-    const userId = normalizeId(move.userId);
-    const schedule = tempSchedulesByUser[userId];
-    const immobileClerkships = immobileByUser[userId] || new Set();
-
-    if (immobileClerkships.has(move.clerkship)) {
-      return {
-        valid: false,
-        reason: `${move.clerkship} is immobile for user ${userId}.`
-      };
-    }
-
-    if (!schedule) {
-      return {
-        valid: false,
-        reason: `No schedule found for user ${userId}.`
-      };
-    }
-
-    const entryIndex = schedule.findIndex((entry) => entry.clerkship === move.clerkship);
-    if (entryIndex === -1) {
-      return {
-        valid: false,
-        reason: `${move.clerkship} was not found in user ${userId}'s schedule.`
-      };
-    }
-
-    const currentEntry = schedule[entryIndex];
-    if (currentEntry.startPeriod !== move.fromPeriod || currentEntry.year !== move.fromYear) {
-      return {
-        valid: false,
-        reason: `${move.clerkship} is no longer at ${move.fromPeriod} year ${move.fromYear} for user ${userId}.`
-      };
-    }
-
-    schedule[entryIndex] = {
-      ...currentEntry,
-      startPeriod: move.toPeriod,
-      year: move.toYear
-    };
-
-    touchedSlotKeys.add(makeSlotKey(move.clerkship, move.fromPeriod, move.fromYear));
-    touchedSlotKeys.add(makeSlotKey(move.clerkship, move.toPeriod, move.toYear));
-  }
+  const { affectedUserIds, tempSchedulesByUser, touchedSlotKeys } = prepared;
 
   for (const userId of affectedUserIds) {
     sortSchedule(tempSchedulesByUser[userId]);
@@ -288,6 +243,68 @@ function simulateAction(state, action, blockedByUser, immobileByUser, clerkshipD
     touchedSlotKeys: Array.from(touchedSlotKeys).sort(),
     beforeCounts,
     afterCounts
+  };
+}
+
+function applyActionToTempSchedules(state, action, immobileByUser) {
+  const tempSchedulesByUser = Object.create(null);
+  const touchedSlotKeys = new Set();
+  const affectedUserIds = uniqueStrings(action.moves.map((move) => normalizeId(move.userId)));
+
+  for (const userId of affectedUserIds) {
+    tempSchedulesByUser[userId] = (state.schedulesByUser[userId] || []).map(cloneScheduleEntry);
+  }
+
+  for (const move of action.moves) {
+    const userId = normalizeId(move.userId);
+    const schedule = tempSchedulesByUser[userId];
+    const immobileClerkships = immobileByUser[userId] || new Set();
+
+    if (immobileClerkships.has(move.clerkship)) {
+      return {
+        valid: false,
+        reason: `${move.clerkship} is immobile for user ${userId}.`
+      };
+    }
+
+    if (!schedule) {
+      return {
+        valid: false,
+        reason: `No schedule found for user ${userId}.`
+      };
+    }
+
+    const entryIndex = schedule.findIndex((entry) => entry.clerkship === move.clerkship);
+    if (entryIndex === -1) {
+      return {
+        valid: false,
+        reason: `${move.clerkship} was not found in user ${userId}'s schedule.`
+      };
+    }
+
+    const currentEntry = schedule[entryIndex];
+    if (currentEntry.startPeriod !== move.fromPeriod || currentEntry.year !== move.fromYear) {
+      return {
+        valid: false,
+        reason: `${move.clerkship} is no longer at ${move.fromPeriod} year ${move.fromYear} for user ${userId}.`
+      };
+    }
+
+    schedule[entryIndex] = {
+      ...currentEntry,
+      startPeriod: move.toPeriod,
+      year: move.toYear
+    };
+
+    touchedSlotKeys.add(makeSlotKey(move.clerkship, move.fromPeriod, move.fromYear));
+    touchedSlotKeys.add(makeSlotKey(move.clerkship, move.toPeriod, move.toYear));
+  }
+
+  return {
+    valid: true,
+    tempSchedulesByUser,
+    affectedUserIds,
+    touchedSlotKeys
   };
 }
 
@@ -424,6 +441,324 @@ function buildDesireGraph(state, desires, immobileByUser) {
   return { adjacency, freeEdges };
 }
 
+function expandActionWithSupportMoves(baseAction, state, blockedByUser, immobileByUser, clerkshipDefinitions) {
+  const validActions = [];
+  const seenActionKeys = new Set();
+
+  function search(action, depth) {
+    const actionKey = canonicalActionKey(action);
+    if (seenActionKeys.has(actionKey)) {
+      return;
+    }
+    seenActionKeys.add(actionKey);
+
+    const prepared = applyActionToTempSchedules(state, action, immobileByUser);
+    if (!prepared.valid) {
+      return;
+    }
+
+    const invalidUsers = [];
+    for (const userId of prepared.affectedUserIds.sort(compareStrings)) {
+      const validation = validateSchedule(
+        prepared.tempSchedulesByUser[userId],
+        blockedByUser[userId] || [],
+        clerkshipDefinitions
+      );
+
+      if (!validation.valid) {
+        invalidUsers.push({ userId, validation });
+      }
+    }
+
+    if (invalidUsers.length === 0) {
+      const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
+      if (simulation.valid) {
+        validActions.push(action);
+      }
+      return;
+    }
+
+    if (depth >= MAX_SUPPORT_MOVES) {
+      return;
+    }
+
+    const firstInvalidUser = invalidUsers[0].userId;
+    const supportMoves = enumerateSupportMovesForUser(
+      firstInvalidUser,
+      prepared.tempSchedulesByUser[firstInvalidUser],
+      action,
+      state,
+      immobileByUser,
+      clerkshipDefinitions
+    );
+
+    for (const supportMove of supportMoves) {
+      search(
+        finalizeAction({
+          ...action,
+          participantUserIds: distinctParticipantUserIds([...action.participantUserIds, supportMove.userId]),
+          desireIdsSatisfied: [...action.desireIdsSatisfied],
+          moves: [...action.moves, supportMove]
+        }),
+        depth + 1
+      );
+    }
+  }
+
+  search(baseAction, 0);
+  return validActions;
+}
+
+function enumerateSupportMovesForUser(userId, schedule, action, state, immobileByUser, clerkshipDefinitions) {
+  const lockedClerkships = new Set(
+    (action.moves || [])
+      .filter((move) => normalizeId(move.userId) === userId)
+      .map((move) => move.clerkship)
+  );
+  const immobileClerkships = immobileByUser[userId] || new Set();
+  const slotDeltas = computeSlotDeltas(action);
+  const supportMovesByKey = new Map();
+  const repairSpecs = [
+    ...buildOverlapRepairSpecs(schedule, lockedClerkships, immobileClerkships, clerkshipDefinitions),
+    ...buildYearMinimumRepairSpecs(schedule, lockedClerkships, immobileClerkships),
+    ...buildPrerequisiteRepairSpecs(schedule, lockedClerkships, immobileClerkships, clerkshipDefinitions)
+  ].sort(compareRepairSpecs);
+
+  // Support moves are local same-user repairs that can restore validity after a desired action lands.
+  for (const repairSpec of repairSpecs) {
+    const definition = clerkshipDefinitions[repairSpec.entry.clerkship];
+    if (!definition) {
+      continue;
+    }
+
+    for (const year of repairSpec.targetYears) {
+      for (const startPeriod of definition.validStarts?.[year] || []) {
+        if (repairSpec.entry.startPeriod === startPeriod && repairSpec.entry.year === year) {
+          continue;
+        }
+
+        if (!repairSpec.isAllowedTarget(startPeriod, year)) {
+          continue;
+        }
+
+        if (!hasSupportMoveCapacity(repairSpec.entry.clerkship, startPeriod, year, state, slotDeltas)) {
+          continue;
+        }
+
+        const move = makeMove(
+          repairSpec.entry.userId,
+          repairSpec.entry.clerkship,
+          repairSpec.entry.startPeriod,
+          repairSpec.entry.year,
+          startPeriod,
+          year
+        );
+        supportMovesByKey.set(canonicalMoveDescriptor(move), move);
+      }
+    }
+  }
+
+  return [...supportMovesByKey.values()].sort(compareMoves);
+}
+
+function buildOverlapRepairSpecs(schedule, lockedClerkships, immobileClerkships, clerkshipDefinitions) {
+  return findOverlapRepairCandidates(
+    schedule,
+    lockedClerkships,
+    immobileClerkships,
+    clerkshipDefinitions
+  ).map((entry) => ({
+    type: 'OVERLAP',
+    entry,
+    targetYears: [0, 1, 2],
+    isAllowedTarget: () => true
+  }));
+}
+
+function buildYearMinimumRepairSpecs(schedule, lockedClerkships, immobileClerkships) {
+  const normalizedSchedule = (schedule || []).slice().sort(compareScheduleEntries);
+  const yearOneEquivalentCount = normalizedSchedule.filter((entry) => FIRST_YEAR_EQUIVALENT_YEARS.has(entry.year)).length;
+
+  if (normalizedSchedule.length < 4 || yearOneEquivalentCount >= 4) {
+    return [];
+  }
+
+  return normalizedSchedule
+    .filter((entry) => entry.year === 2)
+    .filter((entry) => !lockedClerkships.has(entry.clerkship))
+    .filter((entry) => !immobileClerkships.has(entry.clerkship))
+    .map((entry) => ({
+      type: 'YEAR_ONE_MINIMUM',
+      entry,
+      targetYears: [0, 1],
+      isAllowedTarget: (startPeriod, year) => FIRST_YEAR_EQUIVALENT_YEARS.has(year)
+    }));
+}
+
+function buildPrerequisiteRepairSpecs(schedule, lockedClerkships, immobileClerkships, clerkshipDefinitions) {
+  const normalizedSchedule = (schedule || []).slice().sort(compareScheduleEntries);
+  const repairSpecs = [];
+
+  for (const entry of normalizedSchedule) {
+    const definition = clerkshipDefinitions[entry.clerkship];
+    if (!definition?.prerequisites?.length) {
+      continue;
+    }
+
+    const entryStart = globalHalfSlot(entry.startPeriod, entry.year);
+    if (entryStart === -1) {
+      continue;
+    }
+
+    const presentPrerequisites = [];
+    const violatingPrerequisites = [];
+
+    for (const prerequisiteClerkship of definition.prerequisites) {
+      const prerequisiteEntry = findEntry(normalizedSchedule, prerequisiteClerkship);
+      if (!prerequisiteEntry) {
+        continue;
+      }
+
+      const occupiedHalfSlots = getOccupiedGlobalHalfSlots(
+        prerequisiteClerkship,
+        prerequisiteEntry.startPeriod,
+        prerequisiteEntry.year,
+        clerkshipDefinitions
+      );
+      if (!occupiedHalfSlots.length) {
+        continue;
+      }
+
+      const prerequisiteEnd = Math.max(...occupiedHalfSlots);
+      presentPrerequisites.push({ entry: prerequisiteEntry, end: prerequisiteEnd });
+
+      if (prerequisiteEnd >= entryStart) {
+        violatingPrerequisites.push({ entry: prerequisiteEntry, end: prerequisiteEnd });
+      }
+    }
+
+    if (!violatingPrerequisites.length) {
+      continue;
+    }
+
+    const latestPrerequisiteEnd = Math.max(...presentPrerequisites.map((prerequisite) => prerequisite.end));
+    if (!lockedClerkships.has(entry.clerkship) && !immobileClerkships.has(entry.clerkship)) {
+      repairSpecs.push({
+        type: 'PREREQUISITE_DEPENDENT',
+        entry,
+        targetYears: [0, 1, 2],
+        isAllowedTarget: (startPeriod, year) => globalHalfSlot(startPeriod, year) > latestPrerequisiteEnd
+      });
+    }
+
+    for (const prerequisite of violatingPrerequisites.sort((itemA, itemB) => compareScheduleEntries(itemA.entry, itemB.entry))) {
+      if (lockedClerkships.has(prerequisite.entry.clerkship) || immobileClerkships.has(prerequisite.entry.clerkship)) {
+        continue;
+      }
+
+      repairSpecs.push({
+        type: 'PREREQUISITE_PREREQ',
+        entry: prerequisite.entry,
+        targetYears: [0, 1, 2],
+        isAllowedTarget: (startPeriod, year) => {
+          const occupiedHalfSlots = getOccupiedGlobalHalfSlots(
+            prerequisite.entry.clerkship,
+            startPeriod,
+            year,
+            clerkshipDefinitions
+          );
+
+          return occupiedHalfSlots.length > 0 && Math.max(...occupiedHalfSlots) < entryStart;
+        }
+      });
+    }
+  }
+
+  return repairSpecs;
+}
+
+function hasSupportMoveCapacity(clerkship, startPeriod, year, state, slotDeltas) {
+  const targetKey = makeSlotKey(clerkship, startPeriod, year);
+  const beforeCount = state.occupancyBySlot[targetKey]?.size || 0;
+  const projectedDelta = slotDeltas[targetKey] || 0;
+  const openAvailability = Number(state.openAvailabilityBySlot[targetKey] || 0);
+
+  return beforeCount + projectedDelta + 1 <= beforeCount + openAvailability;
+}
+
+function compareRepairSpecs(specA, specB) {
+  const priorityByType = {
+    OVERLAP: 0,
+    YEAR_ONE_MINIMUM: 1,
+    PREREQUISITE_DEPENDENT: 2,
+    PREREQUISITE_PREREQ: 3
+  };
+  const typeComparison = (priorityByType[specA.type] ?? 99) - (priorityByType[specB.type] ?? 99);
+  if (typeComparison !== 0) {
+    return typeComparison;
+  }
+
+  return compareScheduleEntries(specA.entry, specB.entry);
+}
+
+function canonicalMoveDescriptor(move) {
+  return [
+    normalizeId(move.userId),
+    move.clerkship,
+    `${move.fromYear}:${move.fromPeriod}`,
+    `${move.toYear}:${move.toPeriod}`
+  ].join(':');
+}
+
+function findOverlapRepairCandidates(schedule, lockedClerkships, immobileClerkships, clerkshipDefinitions) {
+  const entriesByHalfSlot = new Map();
+  const repairCandidates = [];
+  const seenClerkships = new Set();
+
+  for (const entry of schedule || []) {
+    const occupiedHalfSlots = getOccupiedGlobalHalfSlots(
+      entry.clerkship,
+      entry.startPeriod,
+      entry.year,
+      clerkshipDefinitions
+    );
+
+    for (const halfSlot of occupiedHalfSlots) {
+      if (!entriesByHalfSlot.has(halfSlot)) {
+        entriesByHalfSlot.set(halfSlot, []);
+      }
+      entriesByHalfSlot.get(halfSlot).push(entry);
+    }
+  }
+
+  for (const halfSlot of [...entriesByHalfSlot.keys()].sort((valueA, valueB) => valueA - valueB)) {
+    const entries = entriesByHalfSlot.get(halfSlot) || [];
+    if (entries.length < 2) {
+      continue;
+    }
+
+    const uniqueEntries = [...new Map(entries.map((entry) => [entry.clerkship, entry])).values()]
+      .sort((entryA, entryB) => compareStrings(entryA.clerkship, entryB.clerkship));
+
+    for (const entry of uniqueEntries) {
+      if (seenClerkships.has(entry.clerkship)) {
+        continue;
+      }
+      if (lockedClerkships.has(entry.clerkship)) {
+        continue;
+      }
+      if (immobileClerkships.has(entry.clerkship)) {
+        continue;
+      }
+
+      seenClerkships.add(entry.clerkship);
+      repairCandidates.push(entry);
+    }
+  }
+
+  return repairCandidates;
+}
+
 function enumerateValidCycles(state, graph, blockedByUser, immobileByUser, clerkshipDefinitions) {
   const validCycles = [];
   const seen = new Set();
@@ -443,9 +778,15 @@ function enumerateValidCycles(state, graph, blockedByUser, immobileByUser, clerk
       if (seen.has(actionKey)) continue;
       seen.add(actionKey);
 
-      const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
-      if (simulation.valid) {
-        validCycles.push(action);
+      const supportedActions = expandActionWithSupportMoves(
+        action,
+        state,
+        blockedByUser,
+        immobileByUser,
+        clerkshipDefinitions
+      );
+      for (const supportedAction of supportedActions) {
+        validCycles.push(supportedAction);
       }
     }
   }
@@ -482,9 +823,15 @@ function enumerateValidCycles(state, graph, blockedByUser, immobileByUser, clerk
           if (seen.has(actionKey)) continue;
           seen.add(actionKey);
 
-          const simulation = simulateAction(state, action, blockedByUser, immobileByUser, clerkshipDefinitions);
-          if (simulation.valid) {
-            validCycles.push(action);
+          const supportedActions = expandActionWithSupportMoves(
+            action,
+            state,
+            blockedByUser,
+            immobileByUser,
+            clerkshipDefinitions
+          );
+          for (const supportedAction of supportedActions) {
+            validCycles.push(supportedAction);
           }
           continue;
         }
@@ -616,29 +963,23 @@ async function selectOptimalCycles(validCycles, state, desiresById) {
   if (validCycles.length === 0) return [];
   if (validCycles.length === 1) return [validCycles[0]];
 
-  try {
-    const lpString = buildLPModel(validCycles, state, desiresById);
-    const highs = await getHighsSolver();
-    const solution = highs.solve(lpString);
+  const lpString = buildLPModel(validCycles, state, desiresById);
+  const highs = await getHighsSolver();
+  const solution = highs.solve(lpString);
 
-    if (solution.Status === 'Optimal') {
-      const selected = [];
-      for (let i = 0; i < validCycles.length; i++) {
-        const col = solution.Columns[`x_${i}`];
-        if (col && col.Primal >= 0.5) {
-          selected.push(validCycles[i]);
-        }
+  if (solution.Status === 'Optimal') {
+    const selected = [];
+    for (let i = 0; i < validCycles.length; i++) {
+      const col = solution.Columns[`x_${i}`];
+      if (col && col.Primal >= 0.5) {
+        selected.push(validCycles[i]);
       }
-      selected.sort((a, b) => compareActions(a, b, desiresById));
-      return selected;
     }
-
-    console.warn('HiGHS solver returned non-optimal status:', solution.Status);
-    return [];
-  } catch (error) {
-    console.error('HiGHS solver failed, returning empty results:', error);
-    return [];
+    selected.sort((a, b) => compareActions(a, b, desiresById));
+    return selected;
   }
+
+  throw new Error(`Matching optimization failed with status: ${solution.Status}`);
 }
 
 async function findBestBoundedSwaps(users, schedulesByUser, blockedByUser, desires, openAvailabilityBySlot) {
@@ -982,6 +1323,10 @@ function finalizeAction(action) {
   };
 }
 
+function distinctParticipantUserIds(userIds) {
+  return [...new Set((userIds || []).map(normalizeId))].sort(compareStrings);
+}
+
 function makeMove(userId, clerkship, fromPeriod, fromYear, toPeriod, toYear) {
   return {
     userId,
@@ -1008,18 +1353,20 @@ function cloneScheduleEntry(entry) {
 }
 
 function sortSchedule(schedule) {
-  schedule.sort((entryA, entryB) => {
-    if (entryA.year !== entryB.year) {
-      return entryA.year - entryB.year;
-    }
+  schedule.sort(compareScheduleEntries);
+}
 
-    const startComparison = periodLabelToHalfSlotIndex(entryA.startPeriod) - periodLabelToHalfSlotIndex(entryB.startPeriod);
-    if (startComparison !== 0) {
-      return startComparison;
-    }
+function compareScheduleEntries(entryA, entryB) {
+  if (entryA.year !== entryB.year) {
+    return entryA.year - entryB.year;
+  }
 
-    return compareStrings(entryA.clerkship, entryB.clerkship);
-  });
+  const startComparison = periodLabelToHalfSlotIndex(entryA.startPeriod) - periodLabelToHalfSlotIndex(entryB.startPeriod);
+  if (startComparison !== 0) {
+    return startComparison;
+  }
+
+  return compareStrings(entryA.clerkship, entryB.clerkship);
 }
 
 function compareMoves(moveA, moveB) {
