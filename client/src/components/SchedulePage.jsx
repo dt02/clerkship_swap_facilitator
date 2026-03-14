@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useUser } from '../App';
 import { getSchedule, saveSchedule, getBlocked, saveBlocked } from '../api';
-import { CLERKSHIPS, ALL_PERIODS, CLERKSHIP_NAMES, getOccupiedPeriods } from '../constants';
+import {
+  CLERKSHIPS,
+  CLERKSHIP_NAMES,
+  SCHEDULE_YEARS,
+  formatAcademicYear,
+  formatPeriodYear,
+  getOccupiedPeriods,
+  getPeriodsForYear
+} from '../constants';
 import ScheduleGrid from './ScheduleGrid';
 
 export default function SchedulePage() {
@@ -15,11 +23,11 @@ export default function SchedulePage() {
   // Add clerkship form
   const [addClerkship, setAddClerkship] = useState('');
   const [addPeriod, setAddPeriod] = useState('');
-  const [addYear, setAddYear] = useState(1);
+  const [addYear, setAddYear] = useState(0);
 
   // Blocked period form
   const [blockPeriod, setBlockPeriod] = useState('');
-  const [blockYear, setBlockYear] = useState(1);
+  const [blockYear, setBlockYear] = useState(0);
 
   const loadData = useCallback(async () => {
     if (!currentUser) return;
@@ -56,7 +64,7 @@ export default function SchedulePage() {
     const def = CLERKSHIPS[addClerkship];
     const validStarts = def?.validStarts[addYear] || [];
     if (!validStarts.includes(addPeriod)) {
-      setError(`${addClerkship} cannot start at ${addPeriod} in Year ${addYear}`);
+      setError(`${addClerkship} cannot start at ${addPeriod} in ${formatAcademicYear(addYear)}`);
       return;
     }
 
@@ -87,7 +95,7 @@ export default function SchedulePage() {
     try {
       const result = await saveSchedule(currentUser.id, newEntries);
       setEntries(result);
-      setSuccess(`Added ${addClerkship} at ${addPeriod} Year ${addYear}`);
+      setSuccess(`Added ${addClerkship} at ${formatPeriodYear(addPeriod, addYear)}`);
       setAddClerkship('');
       setAddPeriod('');
     } catch (e) {
@@ -172,6 +180,7 @@ export default function SchedulePage() {
   const validPeriods = addClerkship
     ? (CLERKSHIPS[addClerkship]?.validStarts[addYear] || [])
     : [];
+  const blockedPeriodsForYear = getPeriodsForYear(blockYear);
 
   return (
     <div>
@@ -213,8 +222,9 @@ export default function SchedulePage() {
             <div style={{ display: 'flex', gap: '10px' }}>
               <select value={addYear} onChange={e => { setAddYear(parseInt(e.target.value)); setAddPeriod(''); }}
                 style={{ ...inputStyle, flex: '1' }}>
-                <option value={1}>Year 1</option>
-                <option value={2}>Year 2</option>
+                {SCHEDULE_YEARS.map((year) => (
+                  <option key={year} value={year}>{formatAcademicYear(year)}</option>
+                ))}
               </select>
               <select value={addPeriod} onChange={e => setAddPeriod(e.target.value)}
                 style={{ ...inputStyle, flex: '1' }} required>
@@ -241,13 +251,14 @@ export default function SchedulePage() {
           <form onSubmit={handleAddBlocked} style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
             <select value={blockYear} onChange={e => setBlockYear(parseInt(e.target.value))}
               style={{ ...inputStyle, flex: '1' }}>
-              <option value={1}>Year 1</option>
-              <option value={2}>Year 2</option>
+              {SCHEDULE_YEARS.map((year) => (
+                <option key={year} value={year}>{formatAcademicYear(year)}</option>
+              ))}
             </select>
             <select value={blockPeriod} onChange={e => setBlockPeriod(e.target.value)}
               style={{ ...inputStyle, flex: '1' }} required>
               <option value="">Period...</option>
-              {ALL_PERIODS.map(p => (
+              {blockedPeriodsForYear.map(p => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
@@ -264,7 +275,7 @@ export default function SchedulePage() {
                 alignItems: 'center',
                 gap: '6px'
               }}>
-                Y{b.year} {b.period}
+                {formatPeriodYear(b.period, b.year)}
                 <button onClick={() => handleRemoveBlocked(b.period, b.year)}
                   style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#e74c3c', fontWeight: 'bold', padding: '0' }}>
                   x

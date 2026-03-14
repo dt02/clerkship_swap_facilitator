@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSiteContent } from '../api';
+import { updatePassword, getSiteContent } from '../api';
 import { useUser } from '../App';
 
 const fallbackBlocks = [
@@ -124,12 +124,78 @@ export function HomeBlocks({ blocks }) {
 }
 
 export default function HomePage() {
-  const { signedInUser, currentUser } = useUser();
+  const { signedInUser, currentUser, applyUserUpdate } = useUser();
   const { content, blocks } = useHomeContent();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  async function handlePasswordSave(e) {
+    e.preventDefault();
+    if (!signedInUser) return;
+
+    const hadPassword = signedInUser.has_password;
+    setSavingPassword(true);
+    setPasswordError('');
+    setPasswordMessage('');
+
+    try {
+      const updatedUser = await updatePassword(
+        signedInUser.id,
+        signedInUser.has_password ? currentPassword : '',
+        newPassword
+      );
+      applyUserUpdate(updatedUser);
+      setCurrentPassword('');
+      setNewPassword('');
+      setPasswordMessage(hadPassword ? 'Password updated.' : 'Password created.');
+    } catch (error) {
+      setPasswordError(error.message);
+    } finally {
+      setSavingPassword(false);
+    }
+  }
 
   return (
     <div style={{ display: 'grid', gap: '16px' }}>
       <HomeHero content={content} signedInUser={signedInUser} currentUser={currentUser} />
+      {signedInUser ? (
+        <section style={card}>
+          <h3 style={title}>{signedInUser.has_password ? 'Password' : 'Create Password'}</h3>
+          <p style={{ margin: '0 0 12px', color: '#4a5568', fontSize: '14px', lineHeight: 1.6 }}>
+            {signedInUser.has_password
+              ? 'Use this form to change the password for the account that is currently signed in.'
+              : 'This older account does not have a password yet. Create one now so future sign-ins require both your email and password.'}
+          </p>
+          <form onSubmit={handlePasswordSave} style={{ display: 'grid', gap: '12px', maxWidth: '420px' }}>
+            {signedInUser.has_password ? (
+              <input
+                type="password"
+                placeholder="Current password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                style={inputStyle}
+                required
+              />
+            ) : null}
+            <input
+              type="password"
+              placeholder={signedInUser.has_password ? 'New password' : 'Create password'}
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              style={inputStyle}
+              required
+            />
+            <button type="submit" disabled={savingPassword} style={buttonStyle}>
+              {savingPassword ? 'Saving...' : signedInUser.has_password ? 'Update Password' : 'Create Password'}
+            </button>
+          </form>
+          {passwordMessage ? <div style={successBox}>{passwordMessage}</div> : null}
+          {passwordError ? <div style={errorBox}>{passwordError}</div> : null}
+        </section>
+      ) : null}
       <HomeBlocks blocks={blocks} />
     </div>
   );
@@ -192,4 +258,41 @@ const list = {
   color: '#4a5568',
   lineHeight: 1.7,
   fontSize: '14px'
+};
+
+const inputStyle = {
+  padding: '10px 12px',
+  borderRadius: '6px',
+  border: '1px solid #cbd5e0',
+  fontSize: '14px'
+};
+
+const buttonStyle = {
+  width: 'fit-content',
+  padding: '10px 16px',
+  border: 'none',
+  borderRadius: '6px',
+  backgroundColor: '#2980b9',
+  color: 'white',
+  fontSize: '14px',
+  fontWeight: 600,
+  cursor: 'pointer'
+};
+
+const successBox = {
+  marginTop: '12px',
+  padding: '10px 12px',
+  backgroundColor: '#e8f8e8',
+  color: '#1e8449',
+  borderRadius: '6px',
+  fontSize: '13px'
+};
+
+const errorBox = {
+  marginTop: '12px',
+  padding: '10px 12px',
+  backgroundColor: '#fde8e8',
+  color: '#c0392b',
+  borderRadius: '6px',
+  fontSize: '13px'
 };

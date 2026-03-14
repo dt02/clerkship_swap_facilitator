@@ -9,6 +9,7 @@ const routePath = require.resolve('./matching');
 test('POST /api/matching/run returns a saved matching result for an admin', async () => {
   const insertedPayloads = [];
   const mockDb = createMockDb({
+    sessionToken: 'admin-session',
     actingUser: { id: 99, name: 'Admin', email: 'admin@example.com', is_admin: true },
     users: [
       { id: 99, name: 'Admin', email: 'admin@example.com', is_admin: true },
@@ -38,7 +39,7 @@ test('POST /api/matching/run returns a saved matching result for an admin', asyn
   await withMatchingApp(mockDb, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matching/run`, {
       method: 'POST',
-      headers: { 'x-user-id': '99' }
+      headers: { 'x-session-token': 'admin-session' }
     });
     const body = await response.json();
 
@@ -55,6 +56,7 @@ test('POST /api/matching/run returns a saved matching result for an admin', asyn
 test('POST /api/matching/run returns 400 and does not save when schedules are invalid', async () => {
   let insertCalls = 0;
   const mockDb = createMockDb({
+    sessionToken: 'admin-session',
     actingUser: { id: 99, name: 'Admin', email: 'admin@example.com', is_admin: true },
     users: [
       { id: 99, name: 'Admin', email: 'admin@example.com', is_admin: true },
@@ -76,7 +78,7 @@ test('POST /api/matching/run returns 400 and does not save when schedules are in
   await withMatchingApp(mockDb, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matching/run`, {
       method: 'POST',
-      headers: { 'x-user-id': '99' }
+      headers: { 'x-session-token': 'admin-session' }
     });
     const body = await response.json();
 
@@ -123,13 +125,13 @@ async function withMatchingApp(mockDb, runTest) {
   }
 }
 
-function createMockDb({ actingUser, users, schedules, blocked, desires, availability, onInsert }) {
+function createMockDb({ sessionToken, actingUser, users, schedules, blocked, desires, availability, onInsert }) {
   return {
     async query(text, params = []) {
       const normalizedText = text.replace(/\s+/g, ' ').trim();
 
-      if (normalizedText === 'SELECT * FROM users WHERE id = $1') {
-        return { rows: actingUser && Number(params[0]) === actingUser.id ? [actingUser] : [] };
+      if (normalizedText === 'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1') {
+        return { rows: actingUser && params[0] === sessionToken ? [actingUser] : [] };
       }
 
       if (normalizedText === 'SELECT * FROM users') {

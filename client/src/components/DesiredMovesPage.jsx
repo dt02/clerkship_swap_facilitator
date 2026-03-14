@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useUser } from '../App';
-import { getDesires, addDesire, removeDesire, getSchedule } from '../api';
-import { CLERKSHIPS, CLERKSHIP_NAMES } from '../constants';
+import { getDesires, addDesire, removeDesire, reorderDesires, getSchedule } from '../api';
+import { CLERKSHIPS, SCHEDULE_YEARS, formatAcademicYear, formatPeriodYear } from '../constants';
 
 export default function DesiredMovesPage() {
   const { currentUser } = useUser();
@@ -12,7 +12,7 @@ export default function DesiredMovesPage() {
 
   const [clerkship, setClerkship] = useState('');
   const [toPeriod, setToPeriod] = useState('');
-  const [toYear, setToYear] = useState(1);
+  const [toYear, setToYear] = useState(0);
 
   const loadData = useCallback(async () => {
     if (!currentUser) return;
@@ -79,6 +79,24 @@ export default function DesiredMovesPage() {
     }
   }
 
+  async function handleMove(desireId, direction) {
+    const index = desires.findIndex((desire) => desire.id === desireId);
+    const swapIndex = index + direction;
+    if (index === -1 || swapIndex < 0 || swapIndex >= desires.length) {
+      return;
+    }
+
+    const reordered = [...desires];
+    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+
+    try {
+      const updated = await reorderDesires(currentUser.id, reordered.map((desire) => desire.id));
+      setDesires(updated);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   return (
     <div>
       <h2 style={{ margin: '0 0 16px', fontSize: '18px', color: '#2c3e50' }}>
@@ -91,12 +109,16 @@ export default function DesiredMovesPage() {
       {/* Current desires */}
       <div style={card}>
         <h3 style={cardTitle}>Current Desired Moves</h3>
+        <p style={{ color: '#666', margin: '0 0 12px', fontSize: '13px' }}>
+          Use the arrow buttons to rank your requests. Higher-priority requests are favored when your own desires conflict.
+        </p>
         {desires.length === 0 ? (
           <p style={{ color: '#888', margin: 0 }}>No desired moves yet. Add one below.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={th}>Priority</th>
                 <th style={th}>Clerkship</th>
                 <th style={th}>From</th>
                 <th style={th}>To</th>
@@ -104,11 +126,34 @@ export default function DesiredMovesPage() {
               </tr>
             </thead>
             <tbody>
-              {desires.map(d => (
+              {desires.map((d, index) => (
                 <tr key={d.id}>
+                  <td style={td}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <strong>#{index + 1}</strong>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleMove(d.id, -1)}
+                          disabled={index === 0}
+                          style={priorityButton}
+                        >
+                          Up
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMove(d.id, 1)}
+                          disabled={index === desires.length - 1}
+                          style={priorityButton}
+                        >
+                          Down
+                        </button>
+                      </div>
+                    </div>
+                  </td>
                   <td style={td}><strong>{d.clerkship}</strong></td>
-                  <td style={td}>{d.from_period} Year {d.from_year}</td>
-                  <td style={td}>{d.to_period} Year {d.to_year}</td>
+                  <td style={td}>{formatPeriodYear(d.from_period, d.from_year)}</td>
+                  <td style={td}>{formatPeriodYear(d.to_period, d.to_year)}</td>
                   <td style={td}>
                     <button onClick={() => handleRemove(d.id)} style={removeBtn}>Remove</button>
                   </td>
@@ -122,6 +167,9 @@ export default function DesiredMovesPage() {
       {/* Add desire form */}
       <div style={{ ...card, marginTop: '16px' }}>
         <h3 style={cardTitle}>Add Desired Move</h3>
+        <p style={{ color: '#666', margin: '0 0 12px', fontSize: '13px' }}>
+          New requests are added at the bottom of your priority list.
+        </p>
         {scheduledClerkships.length === 0 ? (
           <p style={{ color: '#888', margin: 0 }}>You need to add clerkships to your schedule first.</p>
         ) : (
@@ -134,7 +182,7 @@ export default function DesiredMovesPage() {
                   const entry = schedule.find(e => e.clerkship === c);
                   return (
                     <option key={c} value={c}>
-                      {c} (currently at {entry.start_period} Year {entry.year})
+                      {c} (currently at {formatPeriodYear(entry.start_period, entry.year)})
                     </option>
                   );
                 })}
@@ -143,7 +191,7 @@ export default function DesiredMovesPage() {
 
             {currentEntry && (
               <div style={{ padding: '8px 12px', backgroundColor: '#f0f0f0', borderRadius: '4px', fontSize: '13px' }}>
-                Currently at: <strong>{currentEntry.start_period} Year {currentEntry.year}</strong>
+                Currently at: <strong>{formatPeriodYear(currentEntry.start_period, currentEntry.year)}</strong>
               </div>
             )}
 
@@ -151,8 +199,9 @@ export default function DesiredMovesPage() {
               <div style={{ flex: 1 }}>
                 <label style={labelStyle}>Destination Year</label>
                 <select value={toYear} onChange={e => { setToYear(parseInt(e.target.value)); setToPeriod(''); }} style={inputStyle}>
-                  <option value={1}>Year 1</option>
-                  <option value={2}>Year 2</option>
+                  {SCHEDULE_YEARS.map((year) => (
+                    <option key={year} value={year}>{formatAcademicYear(year)}</option>
+                  ))}
                 </select>
               </div>
               <div style={{ flex: 1 }}>
@@ -184,3 +233,4 @@ const inputStyle = { padding: '8px 12px', borderRadius: '4px', border: '1px soli
 const labelStyle = { display: 'block', fontSize: '12px', color: '#555', marginBottom: '4px', fontWeight: 600 };
 const btnPrimary = { padding: '10px 20px', backgroundColor: '#2980b9', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', fontWeight: 500 };
 const removeBtn = { padding: '4px 12px', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' };
+const priorityButton = { padding: '4px 8px', backgroundColor: '#ecf0f1', color: '#2c3e50', border: '1px solid #d5dbdb', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' };

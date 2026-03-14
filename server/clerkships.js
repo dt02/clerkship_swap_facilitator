@@ -130,6 +130,25 @@ const ALL_PERIODS = [
   '9A','9B','10A','10B','11A','11B','12A','12B'
 ];
 
+const YEAR_ZERO_PERIODS = ['10A', '10B', '11A', '11B', '12A', '12B'];
+const YEAR_PERIODS = {
+  0: YEAR_ZERO_PERIODS,
+  1: ALL_PERIODS,
+  2: ALL_PERIODS
+};
+const YEAR_LABELS = {
+  0: '2025-26',
+  1: '2026-27',
+  2: '2027-28'
+};
+const SUPPORTED_YEARS = [0, 1, 2];
+const FIRST_YEAR_EQUIVALENT_YEARS = new Set([0, 1]);
+const YEAR_BASE_OFFSETS = {
+  0: -periodToIndex('10A'),
+  1: YEAR_ZERO_PERIODS.length,
+  2: YEAR_ZERO_PERIODS.length + ALL_PERIODS.length
+};
+
 // Convert period string to linear index (0-23)
 function periodToIndex(period) {
   return ALL_PERIODS.indexOf(period);
@@ -157,12 +176,31 @@ function getOccupiedPeriods(clerkship, startPeriod) {
 
 // Get the global index (0-47) for a period+year combo
 function globalIndex(period, year) {
-  return periodToIndex(period) + (year - 1) * 24;
+  const yearOffset = YEAR_BASE_OFFSETS[year];
+  const periodIndex = periodToIndex(period);
+
+  if (yearOffset === undefined || periodIndex === -1) {
+    return -1;
+  }
+
+  return periodIndex + yearOffset;
+}
+
+for (const definition of Object.values(CLERKSHIPS)) {
+  definition.validStarts[0] = (definition.validStarts[1] || []).filter((startPeriod) =>
+    getOccupiedPeriods(definition.name, startPeriod).every((period) => YEAR_ZERO_PERIODS.includes(period))
+  );
 }
 
 module.exports = {
   CLERKSHIPS,
   ALL_PERIODS,
+  YEAR_ZERO_PERIODS,
+  YEAR_PERIODS,
+  YEAR_LABELS,
+  SUPPORTED_YEARS,
+  FIRST_YEAR_EQUIVALENT_YEARS,
+  YEAR_BASE_OFFSETS,
   periodToIndex,
   indexToPeriod,
   getOccupiedPeriods,

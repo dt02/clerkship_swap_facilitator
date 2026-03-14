@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getAvailability, patchAvailability } from '../api';
-import { CLERKSHIPS, CLERKSHIP_NAMES } from '../constants';
+import { CLERKSHIPS, CLERKSHIP_NAMES, SCHEDULE_YEARS, formatAcademicYear } from '../constants';
 
 export default function AvailabilityPage() {
   const [availability, setAvailability] = useState([]);
@@ -77,11 +77,11 @@ export default function AvailabilityPage() {
               {clerkship} - {def.fullName} ({def.length} period{def.length > 1 ? 's' : ''})
             </div>
 
-            {[1, 2].map(year => {
+            {SCHEDULE_YEARS.map(year => {
               const validStarts = def.validStarts[year] || [];
               if (validStarts.length === 0) return (
                 <div key={year} style={{ padding: '8px 16px', fontSize: '12px', color: '#999' }}>
-                  Year {year}: Not available
+                  {formatAcademicYear(year)}: Not available
                 </div>
               );
 
@@ -90,7 +90,7 @@ export default function AvailabilityPage() {
               return (
                 <div key={year} style={{ padding: '8px 16px' }}>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>
-                    Year {year}
+                    {formatAcademicYear(year)}
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                     {validStarts.map(period => {

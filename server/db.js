@@ -1,7 +1,10 @@
 const { Pool } = require('pg');
+const { CLERKSHIPS, SUPPORTED_YEARS } = require('./clerkships');
+const { hashPassword, validatePasswordInput } = require('./passwords');
 
 const defaultAdminEmail = process.env.ADMIN_EMAIL || 'admin@clerkship.local';
 const defaultAdminName = process.env.ADMIN_NAME || 'Clerkship Admin';
+const defaultAdminPassword = process.env.ADMIN_PASSWORD || '';
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required. Configure Render Postgres and set DATABASE_URL.');
@@ -39,6 +42,7 @@ async function initDb() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       is_admin BOOLEAN DEFAULT FALSE,
+      password_hash TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -67,7 +71,9 @@ async function initDb() {
       from_period TEXT NOT NULL,
       from_year INTEGER NOT NULL,
       to_period TEXT NOT NULL,
-      to_year INTEGER NOT NULL
+      to_year INTEGER NOT NULL,
+      priority_rank INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS availability (
@@ -89,6 +95,37 @@ async function initDb() {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE desired_moves ADD COLUMN IF NOT EXISTS priority_rank INTEGER;
+    ALTER TABLE desired_moves ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+  `);
+
+  await pool.query(`
+    WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id
+          ORDER BY priority_rank NULLS LAST, created_at NULLS LAST, id
+        ) AS next_rank
+      FROM desired_moves
+    )
+    UPDATE desired_moves AS desires
+    SET
+      created_at = COALESCE(desires.created_at, NOW()),
+      priority_rank = COALESCE(desires.priority_rank, ranked.next_rank)
+    FROM ranked
+    WHERE desires.id = ranked.id;
   `);
 
   await pool.query(
@@ -101,12 +138,25 @@ async function initDb() {
     [defaultAdminName, defaultAdminEmail]
   );
 
+  if (defaultAdminPassword) {
+    const validationError = validatePasswordInput(defaultAdminPassword);
+    if (validationError) {
+      throw new Error(`ADMIN_PASSWORD invalid: ${validationError}`);
+    }
+
+    const adminPasswordHash = await hashPassword(defaultAdminPassword);
+    await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE lower(email) = lower($2)',
+      [adminPasswordHash, defaultAdminEmail]
+    );
+  }
+
   const defaultSiteContent = {
     hero_title: '',
     hero_body:
-      'Website to facilitate clerkship swaps. It may or may not work, but it doesn\'t hurt to try. Email deantran@stanford.edu if you have any questions.',
+      "Website to facilitate clerkship swaps. It may or may not work, but it doesn't hurt to try. Email deantran@stanford.edu if you have any questions.",
     signed_out_callout:
-      'Sign in or create an account below to start entering your schedule and preferences.',
+      'Sign in or create an account below to start entering your schedule and preferences. IMPORTANT: Please do not use a password that you normally use for other accounts. Passwords are hashed (meaning I can\'t see them), but the data is stored (temporarily) on a free Render database, and I don\'t know how secure it is.',
     signed_in_callout:
       'You are signed in and can use the tabs above to enter schedules, add desired moves, and review availability.',
     home_blocks: JSON.stringify([
@@ -114,7 +164,7 @@ async function initDb() {
         title: 'How To Fill Out Your Information',
         items: [
           'Open the Schedule tab and enter each clerkship at its current start period and year.',
-          'Mark any Blocked Periods where you do not want to schedule a clerkship.',
+          'Mark any Blocked Periods where you do not want to schedule a clerkship. (e.g. periods 10-12 of 2025-26).',
           'If there is a non core clerkship scheduled that you do not want to drop, mark those periods as blocked.',
           'If you do not want a specific clerkship moved, mark it as immobile in the schedule grid.',
           'Go to Desired Moves and add the clerkships you want moved, along with the destination period and year.'
@@ -124,8 +174,8 @@ async function initDb() {
         title: 'How The Algorithm Works',
         items: [
           'The algorithm looks for the best legal way to reshuffle schedules using only three kinds of moves: an open spot, a 2-person swap, or a 3-person swap.',
-          'It checks whether a requested move would keep everyone’s full schedule valid, including no overlaps, no blocked times, correct clerkship timing, required prerequisites, and at least four clerkships in year 1.',
-          'If more than one possible swap could work, it ranks them and picks the option that helps the most students, then repeats the process until no more valid moves are possible.',
+          "It checks whether a requested move would keep everyone's full schedule valid, including no overlaps, no blocked times, correct clerkship timing, required prerequisites, and at least four clerkships in the year 0/1 window.",
+          'If more than one possible swap could work, it ranks them and picks the option that helps the most students, then repeats the process until no more valid moves are possible.'
         ]
       },
       {
@@ -133,7 +183,7 @@ async function initDb() {
         items: [
           'When you login, there is a tab for current core clerkship availabilities that the algorithm uses when proposing matches.',
           'This may not necessarily be up to date. Please ensure that it is, or else the algorithm will not work as intended.',
-          'Anyone can edit the availability tab, and the changes should reflect for everyone.',
+          'Anyone can edit the availability tab, and the changes should reflect for everyone.'
         ]
       }
     ])
@@ -211,6 +261,21 @@ async function initDb() {
         `,
         [clerkship, period, year, spots]
       );
+    }
+  }
+
+  for (const [clerkship, definition] of Object.entries(CLERKSHIPS)) {
+    for (const year of SUPPORTED_YEARS) {
+      for (const period of definition.validStarts[year] || []) {
+        await pool.query(
+          `
+            INSERT INTO availability (clerkship, period, year, spots)
+            VALUES ($1, $2, $3, 0)
+            ON CONFLICT (clerkship, period, year) DO NOTHING
+          `,
+          [clerkship, period, year]
+        );
+      }
     }
   }
 }

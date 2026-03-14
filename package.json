@@ -7,7 +7,7 @@
     "server": "cd server && node index.js",
     "client": "npm.cmd --prefix client run dev",
     "install-all": "npm.cmd install && npm.cmd --prefix server install && npm.cmd --prefix client install",
-    "test:routes": "node server/routes/matching.route.test.js",
+    "test:routes": "node server/routes/matching.route.test.js && node server/routes/users.route.test.js && node server/routes/desires.route.test.js",
     "test:solver": "node --test server/matching/solver.test.js",
     "build": "npm install && npm --prefix server install && npm --prefix client install && npm --prefix client run build",
     "start": "node server/index.js"

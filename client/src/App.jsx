@@ -1,13 +1,14 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import {
-  clearSessionUserId,
+  clearSessionToken,
   createUser,
   getCurrentUser,
-  getSessionUserId,
+  getSessionToken,
   getUsers,
-  loginByEmail,
-  setSessionUserId
+  loginUser,
+  logoutUser,
+  setSessionToken
 } from './api';
 import SchedulePage from './components/SchedulePage';
 import DesiredMovesPage from './components/DesiredMovesPage';
@@ -28,8 +29,10 @@ function App() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [authTab, setAuthTab] = useState('sign-in');
   const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [error, setError] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -38,7 +41,7 @@ function App() {
   }, []);
 
   async function restoreSession() {
-    if (!getSessionUserId()) {
+    if (!getSessionToken()) {
       setAuthLoading(false);
       return;
     }
@@ -47,7 +50,7 @@ function App() {
       const user = await getCurrentUser();
       await finishSignIn(user);
     } catch (e) {
-      clearSessionUserId();
+      clearSessionToken();
       setSignedInUser(null);
       setSelectedUser(null);
       setUsers([]);
@@ -78,9 +81,8 @@ function App() {
   }
 
   async function finishSignIn(user) {
-    setSessionUserId(user.id);
-    setSignedInUser(user);
     setError('');
+    setSignedInUser(user);
 
     if (user.is_admin) {
       await loadUsers(user.id, user);
@@ -90,14 +92,27 @@ function App() {
     }
   }
 
+  function applyUserUpdate(updatedUser) {
+    setSignedInUser(prev => (prev?.id === updatedUser.id ? updatedUser : prev));
+    setSelectedUser(prev => (prev?.id === updatedUser.id ? updatedUser : prev));
+    setUsers(prev => {
+      if (!prev.length) return [updatedUser];
+      const found = prev.some(user => user.id === updatedUser.id);
+      if (!found) return [...prev, updatedUser];
+      return prev.map(user => (user.id === updatedUser.id ? updatedUser : user));
+    });
+  }
+
   async function handleSignIn(e) {
     e.preventDefault();
     setError('');
 
     try {
-      const user = await loginByEmail(loginEmail);
-      await finishSignIn(user);
+      const data = await loginUser(loginEmail, loginPassword);
+      setSessionToken(data.sessionToken);
+      await finishSignIn(data.user);
       setLoginEmail('');
+      setLoginPassword('');
     } catch (e) {
       setError(e.message);
     }
@@ -108,17 +123,25 @@ function App() {
     setError('');
 
     try {
-      const user = await createUser(newName, newEmail);
-      await finishSignIn(user);
+      const data = await createUser(newName, newEmail, newPassword);
+      setSessionToken(data.sessionToken);
+      await finishSignIn(data.user);
       setNewName('');
       setNewEmail('');
+      setNewPassword('');
     } catch (e) {
       setError(e.message);
     }
   }
 
-  function handleSignOut() {
-    clearSessionUserId();
+  async function handleSignOut() {
+    try {
+      await logoutUser();
+    } catch {
+      // Clearing the local token is enough to end the client session.
+    }
+
+    clearSessionToken();
     setSignedInUser(null);
     setSelectedUser(null);
     setUsers([]);
@@ -140,6 +163,7 @@ function App() {
         signedInUser,
         currentUser: selectedUser,
         setCurrentUser: setSelectedUser,
+        applyUserUpdate,
         users,
         loadUsers
       }}
@@ -184,7 +208,7 @@ function App() {
               </div>
             ) : (
               <div style={{ fontSize: '13px', color: '#d6eaf8' }}>
-                Sign in with your email or create a new account.
+                Sign in with your email and password or create a new account.
               </div>
             )}
           </header>
@@ -251,8 +275,18 @@ function App() {
                           required
                           style={inputStyle}
                         />
+                        <input
+                          placeholder="Password"
+                          type="password"
+                          value={loginPassword}
+                          onChange={e => setLoginPassword(e.target.value)}
+                          style={inputStyle}
+                        />
                         <button type="submit" style={primaryButton}>Sign In</button>
                       </form>
+                      <p style={helperText}>
+                        Older accounts created before passwords existed can leave the password blank once, then create one from the Home page.
+                      </p>
                     </>
                   ) : (
                     <>
@@ -273,6 +307,14 @@ function App() {
                           type="email"
                           value={newEmail}
                           onChange={e => setNewEmail(e.target.value)}
+                          required
+                          style={inputStyle}
+                        />
+                        <input
+                          placeholder="Password"
+                          type="password"
+                          value={newPassword}
+                          onChange={e => setNewPassword(e.target.value)}
                           required
                           style={inputStyle}
                         />
@@ -418,6 +460,12 @@ const errorBox = {
   color: '#e74c3c',
   borderRadius: '4px',
   marginBottom: '12px'
+};
+
+const helperText = {
+  color: '#666',
+  margin: '12px 0 0',
+  fontSize: '13px'
 };
 
 export default App;

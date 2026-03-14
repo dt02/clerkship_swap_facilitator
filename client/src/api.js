@@ -1,27 +1,27 @@
 const BASE = '/api';
-const SESSION_USER_ID_KEY = 'clerkship-swaps-session-user-id';
+const SESSION_TOKEN_KEY = 'clerkship-swaps-session-token';
 
-export function getSessionUserId() {
-  return window.localStorage.getItem(SESSION_USER_ID_KEY);
+export function getSessionToken() {
+  return window.localStorage.getItem(SESSION_TOKEN_KEY);
 }
 
-export function setSessionUserId(userId) {
-  if (userId) {
-    window.localStorage.setItem(SESSION_USER_ID_KEY, String(userId));
+export function setSessionToken(sessionToken) {
+  if (sessionToken) {
+    window.localStorage.setItem(SESSION_TOKEN_KEY, String(sessionToken));
   } else {
-    window.localStorage.removeItem(SESSION_USER_ID_KEY);
+    window.localStorage.removeItem(SESSION_TOKEN_KEY);
   }
 }
 
-export function clearSessionUserId() {
-  window.localStorage.removeItem(SESSION_USER_ID_KEY);
+export function clearSessionToken() {
+  window.localStorage.removeItem(SESSION_TOKEN_KEY);
 }
 
 async function request(url, options = {}) {
-  const sessionUserId = getSessionUserId();
+  const sessionToken = getSessionToken();
   const headers = {
     'Content-Type': 'application/json',
-    ...(sessionUserId ? { 'x-user-id': sessionUserId } : {}),
+    ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
     ...(options.headers || {})
   };
 
@@ -39,9 +39,12 @@ async function request(url, options = {}) {
 
 // Users
 export const getCurrentUser = () => request('/users/me');
-export const loginByEmail = (email) => request('/users/login', { method: 'POST', body: { email } });
+export const loginUser = (email, password) => request('/users/login', { method: 'POST', body: { email, password } });
+export const logoutUser = () => request('/users/logout', { method: 'POST' });
 export const getUsers = () => request('/users');
-export const createUser = (name, email) => request('/users', { method: 'POST', body: { name, email } });
+export const createUser = (name, email, password) => request('/users', { method: 'POST', body: { name, email, password } });
+export const updatePassword = (userId, currentPassword, newPassword) =>
+  request(`/users/${userId}/password`, { method: 'PUT', body: { current_password: currentPassword, new_password: newPassword } });
 export const deleteUser = (id) => request(`/users/${id}`, { method: 'DELETE' });
 
 // Schedule
@@ -57,6 +60,8 @@ export const saveBlocked = (userId, blocked) => request(`/users/${userId}/blocke
 // Desired moves
 export const getDesires = (userId) => request(`/users/${userId}/desires`);
 export const addDesire = (userId, desire) => request(`/users/${userId}/desires`, { method: 'POST', body: desire });
+export const reorderDesires = (userId, desireIds) =>
+  request(`/users/${userId}/desires/reorder`, { method: 'PUT', body: { desireIds } });
 export const removeDesire = (userId, desireId) => request(`/users/${userId}/desires/${desireId}`, { method: 'DELETE' });
 
 // Availability

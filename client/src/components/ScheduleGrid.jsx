@@ -1,10 +1,9 @@
 import React from 'react';
-import { CLERKSHIPS, ALL_PERIODS, getOccupiedPeriods } from '../constants';
+import { CLERKSHIPS, SCHEDULE_YEARS, formatAcademicYear, getOccupiedPeriods, getPeriodsForYear } from '../constants';
 
 export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRemove, onToggleBlocked }) {
   // Build occupation map: period+year -> { clerkship, isStart, spanWidth }
-  const occupationByYear = { 1: {}, 2: {} };
-  const startCells = { 1: {}, 2: {} };
+  const occupationByYear = Object.fromEntries(SCHEDULE_YEARS.map((year) => [year, {}]));
 
   for (const entry of entries) {
     const occupied = getOccupiedPeriods(entry.clerkship, entry.start_period);
@@ -18,7 +17,6 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
         isImmobile: entry.is_immobile
       };
     }
-    startCells[entry.year][entry.start_period] = entry.clerkship;
   }
 
   const blockedSet = new Set(blocked.map(b => `${b.year}-${b.period}`));
@@ -28,12 +26,15 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
       <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
         Click any empty cell to block/unblock it
       </div>
-      {[1, 2].map(year => (
+      {SCHEDULE_YEARS.map(year => {
+        const periods = getPeriodsForYear(year);
+
+        return (
         <div key={year} style={{ marginBottom: '16px' }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: '15px', color: '#2c3e50' }}>Year {year}</h3>
+          <h3 style={{ margin: '0 0 8px', fontSize: '15px', color: '#2c3e50' }}>{formatAcademicYear(year)}</h3>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `80px repeat(${ALL_PERIODS.length}, minmax(48px, 1fr))`,
+            gridTemplateColumns: `80px repeat(${periods.length}, minmax(48px, 1fr))`,
             gap: '1px',
             backgroundColor: '#ddd',
             borderRadius: '6px',
@@ -42,13 +43,13 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
           }}>
             {/* Header row */}
             <div style={headerCell}>Period</div>
-            {ALL_PERIODS.map(p => (
+            {periods.map(p => (
               <div key={p} style={headerCell}>{p}</div>
             ))}
 
             {/* Schedule row */}
             <div style={{ ...dataCell, fontWeight: 600, backgroundColor: '#f8f9fa' }}>Schedule</div>
-            {ALL_PERIODS.map(p => {
+            {periods.map(p => {
               const occ = occupationByYear[year][p];
               const isBlocked = blockedSet.has(`${year}-${p}`);
 
@@ -123,7 +124,8 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

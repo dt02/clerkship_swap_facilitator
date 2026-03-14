@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { CLERKSHIPS } = require('../clerkships');
+const { CLERKSHIPS, SUPPORTED_YEARS, YEAR_PERIODS } = require('../clerkships');
 const { requireUserAccess } = require('../auth');
 
 router.get('/:id/schedule', async (req, res, next) => {
@@ -33,8 +33,8 @@ router.put('/:id/schedule', async (req, res, next) => {
       if (!CLERKSHIPS[entry.clerkship]) {
         return res.status(400).json({ error: `Unknown clerkship: ${entry.clerkship}` });
       }
-      if (![1, 2].includes(entry.year)) {
-        return res.status(400).json({ error: 'Year must be 1 or 2' });
+      if (!SUPPORTED_YEARS.includes(entry.year)) {
+        return res.status(400).json({ error: 'Year must be 0, 1, or 2' });
       }
       const validStarts = CLERKSHIPS[entry.clerkship].validStarts[entry.year];
       if (!validStarts || !validStarts.includes(entry.start_period)) {
@@ -106,6 +106,17 @@ router.put('/:id/blocked', async (req, res, next) => {
     const userId = parseInt(req.params.id, 10);
     const actingUser = await requireUserAccess(req, res, userId);
     if (!actingUser) return;
+
+    for (const block of blocked) {
+      if (!SUPPORTED_YEARS.includes(block.year)) {
+        return res.status(400).json({ error: 'Blocked periods must use year 0, 1, or 2' });
+      }
+
+      const validPeriods = YEAR_PERIODS[block.year] || [];
+      if (!validPeriods.includes(block.period)) {
+        return res.status(400).json({ error: `Invalid blocked period ${block.period} for year ${block.year}` });
+      }
+    }
 
     await db.withTransaction(async (client) => {
       await client.query('DELETE FROM blocked_periods WHERE user_id = $1', [userId]);

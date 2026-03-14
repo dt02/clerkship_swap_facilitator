@@ -1,7 +1,13 @@
-const { CLERKSHIPS, ALL_PERIODS } = require('../clerkships');
+const {
+  ALL_PERIODS,
+  CLERKSHIPS,
+  FIRST_YEAR_EQUIVALENT_YEARS,
+  YEAR_BASE_OFFSETS,
+  YEAR_LABELS
+} = require('../clerkships');
 
 const HALF_SLOTS_PER_YEAR = 24;
-const MAX_HALF_SLOTS = 48;
+const MAX_HALF_SLOTS = YEAR_BASE_OFFSETS[2] + HALF_SLOTS_PER_YEAR;
 const MAX_SWAP_SIZE = 3;
 
 function buildClerkshipDefinitions() {
@@ -11,6 +17,7 @@ function buildClerkshipDefinitions() {
       {
         ...definition,
         validStarts: {
+          0: [...(definition.validStarts?.[0] || [])],
           1: [...(definition.validStarts?.[1] || [])],
           2: [...(definition.validStarts?.[2] || [])]
         },
@@ -27,12 +34,13 @@ function periodLabelToHalfSlotIndex(periodLabel) {
 function globalHalfSlot(periodLabel, year) {
   const periodIndex = periodLabelToHalfSlotIndex(periodLabel);
   const normalizedYear = Number(year);
+  const yearOffset = YEAR_BASE_OFFSETS[normalizedYear];
 
-  if (periodIndex === -1 || ![1, 2].includes(normalizedYear)) {
+  if (periodIndex === -1 || yearOffset === undefined) {
     return -1;
   }
 
-  return periodIndex + (normalizedYear - 1) * HALF_SLOTS_PER_YEAR;
+  return periodIndex + yearOffset;
 }
 
 function getOccupiedGlobalHalfSlots(clerkshipCode, startPeriod, year, clerkshipDefinitions) {
@@ -114,16 +122,15 @@ function validateSchedule(scheduleEntries, blockedPeriods, clerkshipDefinitions)
       }
 
       if (blockedHalfSlots.has(halfSlot)) {
-        const localHalfSlot = halfSlot % HALF_SLOTS_PER_YEAR;
-        errors.push(`${entry.clerkship} overlaps blocked period ${ALL_PERIODS[localHalfSlot]} in year ${entry.year}.`);
+        errors.push(`${entry.clerkship} overlaps blocked period ${periodLabelFromGlobalHalfSlot(halfSlot)} in year ${entry.year}.`);
       }
     }
   }
 
   if (normalizedEntries.length >= 4) {
-    const yearOneStarts = normalizedEntries.filter((entry) => entry.year === 1).length;
+    const yearOneStarts = normalizedEntries.filter((entry) => FIRST_YEAR_EQUIVALENT_YEARS.has(entry.year)).length;
     if (yearOneStarts < 4) {
-      errors.push(`Schedule has ${yearOneStarts} clerkships in year 1; at least 4 are required.`);
+      errors.push(`Schedule has ${yearOneStarts} clerkships in the year 0/1 window; at least 4 are required.`);
     }
   }
 
@@ -338,13 +345,13 @@ function scoreAction(action, desiresById) {
     .sort(compareDesiresDeterministically);
 
   const createdAtValues = desireMetadata.map((desire) => normalizeCreatedAt(desire.createdAt));
-  const numericPriorityRanks = desireMetadata
-    .map((desire) => normalizePriorityRank(desire.priorityRank))
-    .filter((rank) => rank != null);
+  const priorityRanks = desireMetadata.map((desire) => normalizePriorityRank(desire.priorityRank) ?? Number.MAX_SAFE_INTEGER);
+  const numericPriorityRanks = priorityRanks.filter((rank) => rank !== Number.MAX_SAFE_INTEGER);
 
   return {
     satisfiedCount: action.desireIdsSatisfied.length,
     participantCount: action.participantUserIds.length,
+    priorityRanks,
     createdAtValues,
     hasPriorityRanks: numericPriorityRanks.length > 0,
     priorityRankSum: numericPriorityRanks.reduce((sum, rank) => sum + rank, 0),
@@ -362,6 +369,11 @@ function compareActions(actionA, actionB, desiresById) {
 
   if (scoreA.participantCount !== scoreB.participantCount) {
     return scoreA.participantCount - scoreB.participantCount;
+  }
+
+  const priorityRankComparison = compareNumericArrays(scoreA.priorityRanks, scoreB.priorityRanks);
+  if (priorityRankComparison !== 0) {
+    return priorityRankComparison;
   }
 
   const createdAtComparison = compareNumericArrays(scoreA.createdAtValues, scoreB.createdAtValues);
@@ -1072,8 +1084,20 @@ function sortedOccupants(occupants) {
   return [...(occupants || [])].sort(compareStrings);
 }
 
+function periodLabelFromGlobalHalfSlot(halfSlot) {
+  if (halfSlot < YEAR_BASE_OFFSETS[1]) {
+    return ALL_PERIODS[halfSlot - YEAR_BASE_OFFSETS[0]];
+  }
+
+  if (halfSlot < YEAR_BASE_OFFSETS[2]) {
+    return ALL_PERIODS[halfSlot - YEAR_BASE_OFFSETS[1]];
+  }
+
+  return ALL_PERIODS[halfSlot - YEAR_BASE_OFFSETS[2]];
+}
+
 function formatPeriodYear(period, year) {
-  return `Y${year} ${period}`;
+  return `${period} ${YEAR_LABELS[year] || `Year ${year}`}`;
 }
 
 module.exports = {

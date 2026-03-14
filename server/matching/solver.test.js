@@ -199,6 +199,63 @@ test('validateSchedule rejects blocked-period failures across occupied half-slot
   assert.match(validation.errors.join(' '), /blocked period 2A/i);
 });
 
+test('validateSchedule counts year 0 clerkships toward the year-1 minimum', () => {
+  const validation = validateSchedule(
+    [
+      { clerkship: 'ANES 306A', start_period: '10A', year: 0 },
+      { clerkship: 'EMED 301A', start_period: '1A', year: 1 },
+      { clerkship: 'FAMMED 301A', start_period: '2A', year: 1 },
+      { clerkship: 'PSYC 300A', start_period: '3A', year: 1 }
+    ],
+    [],
+    clerkshipDefinitions
+  );
+
+  assert.equal(validation.valid, true);
+});
+
+test('findBestBoundedSwaps prefers a higher-priority desire when one user has conflicting requests', () => {
+  const result = findBestBoundedSwaps(
+    [{ id: 1, name: 'Alice' }],
+    {
+      1: [{ clerkship: 'EMED 301A', start_period: '1A', year: 1, is_immobile: false }]
+    },
+    {},
+    [
+      {
+        id: 801,
+        user_id: 1,
+        clerkship: 'EMED 301A',
+        from_period: '1A',
+        from_year: 1,
+        to_period: '2A',
+        to_year: 1,
+        created_at: '2026-01-01T00:00:00Z',
+        priority_rank: 2
+      },
+      {
+        id: 802,
+        user_id: 1,
+        clerkship: 'EMED 301A',
+        from_period: '1A',
+        from_year: 1,
+        to_period: '3A',
+        to_year: 1,
+        created_at: '2026-02-01T00:00:00Z',
+        priority_rank: 1
+      }
+    ],
+    {
+      'EMED 301A|2A|1': 1,
+      'EMED 301A|3A|1': 1
+    }
+  );
+
+  assert.equal(result.acceptedActions.length, 1);
+  assert.equal(result.acceptedActions[0].moves[0].toPeriod, '3A');
+  assert.equal(result.satisfiedDesires[0].id, 802);
+});
+
 test('compareActions breaks ties deterministically with canonical ordering', () => {
   const desiresById = {
     d1: { id: 'd1', createdAt: null, priorityRank: null },

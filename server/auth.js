@@ -1,14 +1,47 @@
+const crypto = require('crypto');
 const db = require('./db');
 
+function toPublicUser(user) {
+  if (!user) return null;
+
+  const { password_hash, ...rest } = user;
+  return {
+    ...rest,
+    has_password: Boolean(password_hash)
+  };
+}
+
 async function getActingUser(req) {
-  const rawUserId = req.header('x-user-id');
-  if (!rawUserId) return null;
+  const sessionToken = req.header('x-session-token');
+  if (!sessionToken) return null;
 
-  const userId = parseInt(rawUserId, 10);
-  if (!Number.isInteger(userId)) return null;
-
-  const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+  const result = await db.query(
+    `
+      SELECT u.*
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token = $1
+    `,
+    [sessionToken]
+  );
   return result.rows[0] || null;
+}
+
+async function createSessionForUser(userId) {
+  const sessionToken = crypto.randomBytes(32).toString('hex');
+  await db.query(
+    `
+      INSERT INTO sessions (user_id, token)
+      VALUES ($1, $2)
+    `,
+    [userId, sessionToken]
+  );
+  return sessionToken;
+}
+
+async function revokeSessionByToken(sessionToken) {
+  if (!sessionToken) return;
+  await db.query('DELETE FROM sessions WHERE token = $1', [sessionToken]);
 }
 
 async function requireSignedIn(req, res) {
@@ -45,8 +78,11 @@ async function requireUserAccess(req, res, targetUserId) {
 }
 
 module.exports = {
+  createSessionForUser,
   getActingUser,
   requireSignedIn,
   requireAdmin,
-  requireUserAccess
+  requireUserAccess,
+  revokeSessionByToken,
+  toPublicUser
 };

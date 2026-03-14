@@ -141,6 +141,19 @@ export const ALL_PERIODS = [
   '9A','9B','10A','10B','11A','11B','12A','12B'
 ];
 
+export const YEAR_ZERO_PERIODS = ['10A', '10B', '11A', '11B', '12A', '12B'];
+export const YEAR_PERIODS = {
+  0: YEAR_ZERO_PERIODS,
+  1: ALL_PERIODS,
+  2: ALL_PERIODS
+};
+export const YEAR_LABELS = {
+  0: '2025-26',
+  1: '2026-27',
+  2: '2027-28'
+};
+export const SCHEDULE_YEARS = [0, 1, 2];
+
 export const CLERKSHIP_NAMES = Object.keys(CLERKSHIPS);
 
 export function periodToIndex(period) {
@@ -159,4 +172,22 @@ export function getOccupiedPeriods(clerkship, startPeriod) {
     }
   }
   return periods;
+}
+
+for (const definition of Object.values(CLERKSHIPS)) {
+  definition.validStarts[0] = (definition.validStarts[1] || []).filter((startPeriod) =>
+    getOccupiedPeriods(definition.name, startPeriod).every((period) => YEAR_ZERO_PERIODS.includes(period))
+  );
+}
+
+export function getPeriodsForYear(year) {
+  return YEAR_PERIODS[year] || ALL_PERIODS;
+}
+
+export function formatAcademicYear(year) {
+  return YEAR_LABELS[year] || `Year ${year}`;
+}
+
+export function formatPeriodYear(period, year) {
+  return `${period} ${formatAcademicYear(year)}`;
 }
