@@ -34,7 +34,7 @@ router.post('/run', async (req, res, next) => {
       availability[`${entry.clerkship}|${entry.period}|${entry.year}`] = entry.spots;
     }
 
-    const result = findSwaps(users.rows, schedules, blocked, allDesires.rows, availability);
+    const result = await findSwaps(users.rows, schedules, blocked, allDesires.rows, availability);
 
     if (result.errors?.length) {
       return res.status(400).json({
