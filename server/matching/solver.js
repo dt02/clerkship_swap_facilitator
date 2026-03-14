@@ -683,6 +683,8 @@ function hasSupportMoveCapacity(clerkship, startPeriod, year, state, slotDeltas)
   const projectedDelta = slotDeltas[targetKey] || 0;
   const openAvailability = Number(state.openAvailabilityBySlot[targetKey] || 0);
 
+  // A negative projected delta means this candidate batch already vacates the slot,
+  // so a support move can reuse that seat even when standalone open availability is zero.
   return beforeCount + projectedDelta + 1 <= beforeCount + openAvailability;
 }
 

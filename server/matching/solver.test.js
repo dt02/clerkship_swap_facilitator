@@ -297,6 +297,80 @@ test('findBestBoundedSwaps can repair a prerequisite violation by moving the dep
   assert.equal(anes.year, 1);
 });
 
+test('findBestBoundedSwaps lets a repair move reuse a same-clerkship slot vacated by the candidate swap', async () => {
+  const result = await findBestBoundedSwaps(
+    [
+      { id: 1, name: 'Alice' },
+      { id: 2, name: 'Bob' },
+      { id: 3, name: 'Cara' }
+    ],
+    {
+      1: [
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '3A', year: 1, is_immobile: false },
+        { clerkship: 'ANES 306A', start_period: '5A', year: 1, is_immobile: false }
+      ],
+      2: [
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '7A', year: 1, is_immobile: false },
+        { clerkship: 'ANES 306A', start_period: '9A', year: 1, is_immobile: false }
+      ],
+      3: [
+        { clerkship: 'SURG 300A', start_period: '1A', year: 1, is_immobile: false },
+        { clerkship: 'MED 300A', start_period: '5A', year: 1, is_immobile: false },
+        { clerkship: 'ANES 306A', start_period: '10A', year: 1, is_immobile: false }
+      ]
+    },
+    {},
+    [
+      {
+        id: 'alice-med-later',
+        user_id: 1,
+        clerkship: 'MED 300A',
+        from_period: '3A',
+        from_year: 1,
+        to_period: '7A',
+        to_year: 1
+      },
+      {
+        id: 'bob-anes-later',
+        user_id: 2,
+        clerkship: 'ANES 306A',
+        from_period: '9A',
+        from_year: 1,
+        to_period: '10A',
+        to_year: 1
+      },
+      {
+        id: 'cara-med-earlier',
+        user_id: 3,
+        clerkship: 'MED 300A',
+        from_period: '5A',
+        from_year: 1,
+        to_period: '3A',
+        to_year: 1
+      }
+    ],
+    {
+      'MED 300A|7A|1': 1,
+      'ANES 306A|10A|1': 1
+    }
+  );
+
+  assert.equal(result.acceptedActions.length, 1);
+  assert.equal(result.acceptedActions[0].type, 'SWAP_3');
+  assert.equal(result.acceptedActions[0].moves.length, 4);
+  assert.equal(result.satisfiedDesires.length, 3);
+
+  const aliceSchedule = result.finalSchedulesByUser['1'];
+  const aliceMed = aliceSchedule.find((entry) => entry.clerkship === 'MED 300A');
+  const aliceAnes = aliceSchedule.find((entry) => entry.clerkship === 'ANES 306A');
+
+  assert.equal(aliceMed.startPeriod, '7A');
+  assert.equal(aliceAnes.startPeriod, '9A');
+  assert.equal(aliceAnes.year, 1);
+});
+
 test('simulateAction rejects overlap failures after applying the candidate move', () => {
   const state = {
     schedulesByUser: {
