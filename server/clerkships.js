@@ -130,11 +130,12 @@ const ALL_PERIODS = [
   '9A','9B','10A','10B','11A','11B','12A','12B'
 ];
 
-const YEAR_ZERO_PERIODS = ['10A', '10B', '11A', '11B', '12A', '12B'];
+const YEAR_ZERO_PERIODS = ['11A', '11B', '12A', '12B'];
+const YEAR_TWO_PERIODS = ALL_PERIODS.slice(0, periodToIndex('10B') + 1);
 const YEAR_PERIODS = {
   0: YEAR_ZERO_PERIODS,
   1: ALL_PERIODS,
-  2: ALL_PERIODS
+  2: YEAR_TWO_PERIODS
 };
 const YEAR_LABELS = {
   0: '2025-26',
@@ -144,7 +145,7 @@ const YEAR_LABELS = {
 const SUPPORTED_YEARS = [0, 1, 2];
 const FIRST_YEAR_EQUIVALENT_YEARS = new Set([0, 1]);
 const YEAR_BASE_OFFSETS = {
-  0: -periodToIndex('10A'),
+  0: -periodToIndex('11A'),
   1: YEAR_ZERO_PERIODS.length,
   2: YEAR_ZERO_PERIODS.length + ALL_PERIODS.length
 };

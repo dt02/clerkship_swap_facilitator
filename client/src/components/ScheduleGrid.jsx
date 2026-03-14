@@ -1,5 +1,5 @@
 import React from 'react';
-import { CLERKSHIPS, SCHEDULE_YEARS, formatAcademicYear, getOccupiedPeriods, getPeriodsForYear } from '../constants';
+import { ALL_PERIODS, CLERKSHIPS, SCHEDULE_YEARS, formatAcademicYear, getOccupiedPeriods, getPeriodsForYear } from '../constants';
 
 export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRemove, onToggleBlocked }) {
   // Build occupation map: period+year -> { clerkship, isStart, spanWidth }
@@ -27,7 +27,8 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
         Click any empty cell to block/unblock it
       </div>
       {SCHEDULE_YEARS.map(year => {
-        const periods = getPeriodsForYear(year);
+        const allowedPeriods = new Set(getPeriodsForYear(year));
+        const periods = ALL_PERIODS;
 
         return (
         <div key={year} style={{ marginBottom: '16px' }}>
@@ -44,18 +45,26 @@ export default function ScheduleGrid({ entries, blocked, onToggleImmobile, onRem
             {/* Header row */}
             <div style={headerCell}>Period</div>
             {periods.map(p => (
-              <div key={p} style={headerCell}>{p}</div>
+              <div key={p} style={{
+                ...headerCell,
+                ...(allowedPeriods.has(p) ? null : inactiveHeaderCell)
+              }}>{p}</div>
             ))}
 
             {/* Schedule row */}
             <div style={{ ...dataCell, fontWeight: 600, backgroundColor: '#f8f9fa' }}>Schedule</div>
             {periods.map(p => {
+              const isAvailablePeriod = allowedPeriods.has(p);
               const occ = occupationByYear[year][p];
               const isBlocked = blockedSet.has(`${year}-${p}`);
 
               if (occ && !occ.isStart) {
                 // Part of a multi-period clerkship but not the start - skip (handled by colspan)
                 return null;
+              }
+
+              if (!isAvailablePeriod) {
+                return <div key={p} style={inactiveDataCell} />;
               }
 
               if (occ && occ.isStart) {
@@ -147,6 +156,17 @@ const dataCell = {
   justifyContent: 'center',
   alignItems: 'center',
   minHeight: '60px'
+};
+
+const inactiveHeaderCell = {
+  backgroundColor: '#eef2f5',
+  color: '#b0b8c1'
+};
+
+const inactiveDataCell = {
+  ...dataCell,
+  backgroundColor: 'white',
+  color: 'transparent'
 };
 
 const tinyBtn = {

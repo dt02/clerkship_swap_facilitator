@@ -202,7 +202,7 @@ test('validateSchedule rejects blocked-period failures across occupied half-slot
 test('validateSchedule counts year 0 clerkships toward the year-1 minimum', () => {
   const validation = validateSchedule(
     [
-      { clerkship: 'ANES 306A', start_period: '10A', year: 0 },
+      { clerkship: 'ANES 306A', start_period: '11A', year: 0 },
       { clerkship: 'EMED 301A', start_period: '1A', year: 1 },
       { clerkship: 'FAMMED 301A', start_period: '2A', year: 1 },
       { clerkship: 'PSYC 300A', start_period: '3A', year: 1 }

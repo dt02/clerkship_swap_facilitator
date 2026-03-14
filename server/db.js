@@ -156,7 +156,7 @@ async function initDb() {
     hero_body:
       "Website to facilitate clerkship swaps. It may or may not work, but it doesn't hurt to try. Email deantran@stanford.edu if you have any questions.",
     signed_out_callout:
-      'Sign in or create an account below to start entering your schedule and preferences. IMPORTANT: Please do not use a password that you normally use for other accounts. Passwords are hashed (meaning I can\'t see them), but the data is stored (temporarily) on a free Render database, and I don\'t know how secure it is.',
+      'IMPORTANT: Please do not use a password that you normally use for other accounts. Passwords are hashed (meaning I can\'t see them), but the data is stored (temporarily) on a free Render database, and I don\'t know how secure it is.',
     signed_in_callout:
       'You are signed in and can use the tabs above to enter schedules, add desired moves, and review availability.',
     home_blocks: JSON.stringify([

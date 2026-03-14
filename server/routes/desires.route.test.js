@@ -36,7 +36,7 @@ test('POST /api/users/:id/desires accepts year 0 requests and appends the next p
         clerkship: 'PEDS 300A',
         from_period: '11A',
         from_year: 1,
-        to_period: '10A',
+        to_period: '11A',
         to_year: 0
       })
     });
